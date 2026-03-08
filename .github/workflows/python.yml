@@ -52,16 +52,16 @@ jobs:
         run: uv run pip-audit
 
       - name: Lint (ruff)
-        run: ruff check src tests
+        run: uv run ruff check src tests
 
       - name: Import sorting (ruff isort)
-        run: ruff check --select I src tests
+        run: uv run ruff check --select I src tests
 
       - name: Type check (mypy)
-        run: mypy
+        run: uv run mypy
 
       - name: Tests
-        run: python -m pytest
+        run: uv run python -m pytest
         env:
           AUDITHUB_BASE_URL: ${{ secrets.AUDITHUB_BASE_URL }}
           AUDITHUB_OIDC_CONFIGURATION_URL: ${{ secrets.AUDITHUB_OIDC_CONFIGURATION_URL }}
