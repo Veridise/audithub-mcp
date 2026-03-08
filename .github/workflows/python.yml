@@ -49,7 +49,7 @@ jobs:
           uv pip install --no-deps -e .
 
       - name: Supply chain audit
-        run: pip-audit
+        run: uv run pip-audit
 
       - name: Lint (ruff)
         run: ruff check src tests
