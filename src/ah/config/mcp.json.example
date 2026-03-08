@@ -1,0 +1,17 @@
+{
+  "mcpServers": {
+    "ah": {
+      "command": "ah-mcp",
+      "args": [
+        "--allowed-org-ids", "YOUR_ORG_ID",
+        "--allowed-project-ids", "YOUR_PROJECT_ID_1,YOUR_PROJECT_ID_2"
+      ],
+      "env": {
+        "AUDITHUB_BASE_URL": "https://audithub.veridise.com/api/v1",
+        "AUDITHUB_OIDC_CONFIGURATION_URL": "https://YOUR_IDP/.well-known/openid-configuration",
+        "AUDITHUB_OIDC_CLIENT_ID": "YOUR_CLIENT_ID",
+        "AUDITHUB_OIDC_CLIENT_SECRET": "YOUR_CLIENT_SECRET"
+      }
+    }
+  }
+}

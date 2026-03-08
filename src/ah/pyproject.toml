@@ -1,0 +1,57 @@
+[project]
+name = "ah-mcp"
+version = "0.1.0"
+description = "Read-only MCP server for AuditHub"
+requires-python = ">=3.12"
+dependencies = [
+    "mcp>=1.0.0",
+    "audithub-client",
+]
+
+[project.optional-dependencies]
+dev = [
+    "ruff>=0.4.0",
+    "mypy>=1.10.0",
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "pytest-asyncio>=0.23.0",
+]
+
+[project.scripts]
+ah-mcp = "ah_mcp.server:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ah_mcp"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["ah_mcp"]
+
+[tool.mypy]
+python_version = "3.12"
+files = ["src/ah_mcp"]
+strict = true
+# audithub_client is a private library; stubs are not available.
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+addopts = "-v"
+
+[tool.coverage.run]
+source = ["src/ah_mcp"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
