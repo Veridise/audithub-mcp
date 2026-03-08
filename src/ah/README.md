@@ -59,49 +59,22 @@ All four credential variables (`AUDITHUB_BASE_URL`, `AUDITHUB_OIDC_CONFIGURATION
 
 ## Configure for agents
 
-Add to your agent's MCP configuration (e.g. `.codex/config.json` for Codex, `.claude/mcp.json` for Claude Code):
+All credentials are loaded from your `.env` file — nothing secret goes in the agent config.
+
+Add to your agent's MCP configuration (e.g. `.codex/config.json` for Codex, `.claude/mcp.json` for Claude Code, or your ChatGPT Desktop MCP config):
 
 ```json
 {
   "mcpServers": {
     "ah": {
-      "command": "ah-mcp",
-      "args": ["--allowed-org-ids", "<org_id>", "--allowed-project-ids", "<proj_id1>,<proj_id2>"],
-      "env": {
-        "AUDITHUB_BASE_URL": "...",
-        "AUDITHUB_OIDC_CONFIGURATION_URL": "...",
-        "AUDITHUB_OIDC_CLIENT_ID": "...",
-        "AUDITHUB_OIDC_CLIENT_SECRET": "..."
-      }
+      "command": "bash",
+      "args": ["-c", "set -a && source /absolute/path/to/ah.env && set +a && ah-mcp"]
     }
   }
 }
 ```
 
-## Configure for OpenAI Codex
-
-Add to your `.codex/config.json`:
-
-```json
-{
-  "mcpServers": {
-    "ah": {
-      "command": "ah-mcp",
-      "args": ["--allowed-org-ids", "<org_id>", "--allowed-project-ids", "<proj_id1>,<proj_id2>"],
-      "env": {
-        "AUDITHUB_BASE_URL": "...",
-        "AUDITHUB_OIDC_CONFIGURATION_URL": "...",
-        "AUDITHUB_OIDC_CLIENT_ID": "...",
-        "AUDITHUB_OIDC_CLIENT_SECRET": "..."
-      }
-    }
-  }
-}
-```
-
-## Configure for ChatGPT Desktop
-
-Add the same `mcpServers` block to your ChatGPT Desktop MCP configuration. The format is identical to the example above.
+Replace `/absolute/path/to/ah.env` with the actual path to your `.env` file. Your `.env` file (see `.env.example`) holds all credentials and allowlist IDs; no secrets belong in the agent config file.
 
 ## Available MCP tools
 
