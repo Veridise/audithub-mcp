@@ -14,13 +14,14 @@ logger = logging.getLogger("ah_mcp.audit")
 _MAX_ERROR_LEN: int = 200
 
 
-def log_call_start(tool_name: str, safe_args: dict[str, object]) -> None:
+def log_call_start(tool_name: str, safe_args: dict[str, int | None]) -> None:
     """Log the start of a tool call at INFO level.
 
     Args:
         tool_name: Name of the MCP tool being called.
-        safe_args: Tool arguments safe to include in logs.  Must not contain
-            credentials, step_code values, or response body content.
+        safe_args: Numeric tool arguments safe to include in logs.  Restricted to
+            ``int | None`` values to prevent accidental logging of free-text API
+            response content that could carry prompt-injection payloads.
     """
     arg_str = " ".join(f"{k}={v!r}" for k, v in safe_args.items())
     logger.info("tool=%s %s", tool_name, arg_str)

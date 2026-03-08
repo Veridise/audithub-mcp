@@ -13,6 +13,11 @@ from datetime import datetime
 from typing import Annotated, Any, Literal
 
 from pydantic import AnyUrl, BaseModel, ConfigDict, Field, model_validator
+from pydantic.networks import UrlConstraints
+
+#: URL type restricted to HTTPS only.  Rejects file://, javascript:, and other
+#: non-HTTPS schemes that could act as SSRF gadgets when followed by an agent.
+_HttpsUrl = Annotated[AnyUrl, UrlConstraints(allowed_schemes=["https"])]
 
 # ---------------------------------------------------------------------------
 # Shared building blocks
@@ -157,7 +162,7 @@ class Artifact(BaseModel):
     step_code: str
     mime_type: str
     is_fio: bool
-    presigned_url: str | None = Field(
+    presigned_url: _HttpsUrl | None = Field(
         None, description="Time-limited pre-signed URL for downloading the artifact."
     )
 
@@ -290,7 +295,7 @@ class ExtraFunctionArguments(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     comments: str | None = None
-    pr: AnyUrl | None = Field(None, alias="PR")
+    pr: _HttpsUrl | None = Field(None, alias="PR")
     commit: str | None = None
 
 
@@ -350,11 +355,19 @@ class IssueDetails(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def _parse_data_by_kind(cls, values: dict[str, Any]) -> dict[str, Any]:
+    def _parse_data_by_kind(cls, values: Any) -> Any:
         """Select Issue or IssueComplete based on the kind discriminator."""
+        if not isinstance(values, dict):
+            raise ValueError(
+                f"IssueDetails expected a dict input, got {type(values).__name__!r}"
+            )
         kind = values.get("kind")
         data = values.get("data")
         if data is None:
             raise ValueError("IssueDetails requires a 'data' field")
+        if kind not in ("public", "complete"):
+            raise ValueError(
+                f"Unknown IssueDetails kind {kind!r}; expected 'public' or 'complete'"
+            )
         values["data"] = (IssueComplete if kind == "complete" else Issue).model_validate(data)
         return values

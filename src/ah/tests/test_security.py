@@ -117,9 +117,10 @@ class TestDisallowedIds(unittest.TestCase):
         """Error messages must not reveal the full allowlist contents."""
         with self.assertRaises(RuntimeError) as cm:
             server.get_project(organization_id=42, project_id=10)
-        # Only the rejected ID should appear, not the allowlist values
         msg = str(cm.exception)
+        # The rejected ID appears so the caller can self-diagnose
         self.assertIn("42", msg)
+        # Must not leak the allowlist representation (frozenset of allowed IDs)
         self.assertNotIn("frozenset", msg)
 
 
@@ -242,13 +243,21 @@ class TestErrorSanitization(unittest.TestCase):
     """_run_tool sanitizes non-RuntimeError exceptions to prevent credential leakage."""
 
     def test_non_runtime_error_sanitized(self) -> None:
+        """Credential material from non-RuntimeError exceptions must NOT reach the caller.
+
+        The exception message is forwarded to the audit log only; the caller receives
+        a generic message that cannot contain OIDC token or secret material.
+        """
         def _raises_value_error() -> None:
             raise ValueError("secret=abc123 token=xyz")
 
         with self.assertRaises(RuntimeError) as cm:
             server._run_tool(_raises_value_error)
-        # Message is preserved but no __context__ or __cause__
-        self.assertIn("secret=abc123", str(cm.exception))
+        msg = str(cm.exception)
+        # Credential material must be absent from the error propagated to the MCP client
+        self.assertNotIn("secret=abc123", msg)
+        self.assertNotIn("token=xyz", msg)
+        # Context chain must be stripped
         self.assertIsNone(cm.exception.__context__)
         self.assertIsNone(cm.exception.__cause__)
 

@@ -5,10 +5,14 @@ on:
     branches: ["main"]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   python:
-    name: "${{ matrix.server }}"
+    name: "Python Quality / ${{ matrix.server }}"
     runs-on: ubuntu-latest
+    environment: "Configure CI/CD Testing"
     strategy:
       matrix:
         server: [ah]
@@ -34,8 +38,18 @@ jobs:
       - name: Install dependencies
         run: |
           uv venv
-          uv pip install "mcp>=1.0.0" ruff "mypy>=1.10.0"
+          uv pip install \
+            "mcp>=1.0.0" \
+            ruff \
+            "mypy>=1.10.0" \
+            "pytest>=7.0.0" \
+            "pytest-cov>=4.0.0" \
+            "pytest-asyncio>=0.23.0" \
+            pip-audit
           uv pip install --no-deps -e .
+
+      - name: Supply chain audit
+        run: pip-audit
 
       - name: Lint (ruff)
         run: ruff check src tests
@@ -53,5 +67,5 @@ jobs:
           AUDITHUB_OIDC_CONFIGURATION_URL: ${{ secrets.AUDITHUB_OIDC_CONFIGURATION_URL }}
           AUDITHUB_OIDC_CLIENT_ID: ${{ secrets.AUDITHUB_OIDC_CLIENT_ID }}
           AUDITHUB_OIDC_CLIENT_SECRET: ${{ secrets.AUDITHUB_OIDC_CLIENT_SECRET }}
-          AH_ALLOWED_ORG_IDS: "84"
-          AH_ALLOWED_PROJECT_IDS: "275"
+          AH_ALLOWED_ORG_IDS: ${{ vars.AH_ALLOWED_ORG_IDS }}
+          AH_ALLOWED_PROJECT_IDS: ${{ vars.AH_ALLOWED_PROJECT_IDS }}

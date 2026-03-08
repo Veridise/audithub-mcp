@@ -305,7 +305,7 @@ def _run_tool[T](
     fn: Callable[[], T],
     *,
     tool_name: str = "",
-    safe_args: dict[str, object] | None = None,
+    safe_args: dict[str, int | None] | None = None,
 ) -> T:
     """Execute a tool function, sanitizing exceptions to prevent credential leakage.
 
@@ -351,9 +351,16 @@ def _run_tool[T](
         raise
     except Exception as exc:
         elapsed_ms = (time.monotonic() - start) * 1000
-        msg = str(exc)
-        if tool_name:
-            log_call_error(tool_name, msg, elapsed_ms)
+        # Log the actual message for operators; do NOT propagate it to the caller.
+        # Exception messages from the OIDC/HTTP library may contain credential material.
+        logged = bool(tool_name)
+        if logged:
+            log_call_error(tool_name, str(exc), elapsed_ms)
+        msg = (
+            "An internal error occurred. Details have been logged."
+            if logged
+            else "An internal error occurred."
+        )
         sanitized = RuntimeError(msg)
     raise sanitized  # raised outside except block so __context__ is not set
 

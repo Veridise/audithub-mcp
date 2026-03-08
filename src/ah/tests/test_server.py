@@ -316,13 +316,42 @@ class TestRunTool(unittest.TestCase):
         self.assertIsNone(cm.exception.__cause__)
         self.assertIsNone(cm.exception.__context__)
 
-    def test_sanitized_exception_preserves_message(self) -> None:
-        """The sanitized RuntimeError must carry the original exception's message."""
+    def test_sanitized_exception_uses_generic_message(self) -> None:
+        """Non-RuntimeError exceptions produce a generic message, not the original.
+
+        The original message may contain credential material from the OIDC library,
+        so it must not be forwarded to the MCP client.  It is logged separately.
+        """
         def raises() -> None:
             raise ValueError("descriptive error text")
         with self.assertRaises(RuntimeError) as cm:
+            server._run_tool(raises, tool_name="test_tool", safe_args={})
+        msg = str(cm.exception)
+        self.assertNotIn("descriptive error text", msg)
+        self.assertEqual(msg, "An internal error occurred. Details have been logged.")
+
+    def test_sanitized_exception_no_tool_name_no_logged_claim(self) -> None:
+        """When tool_name is empty, error is not logged so message must not claim it was."""
+        def raises() -> None:
+            raise ValueError("internal detail")
+        with self.assertRaises(RuntimeError) as cm:
+            server._run_tool(raises)  # no tool_name
+        self.assertEqual(str(cm.exception), "An internal error occurred.")
+        self.assertNotIn("logged", str(cm.exception))
+
+    def test_sanitized_exception_no_tool_name_no_audit_log(self) -> None:
+        """When tool_name is empty, audit logger must not be called."""
+        import ah_mcp.audit as audit_mod
+
+        def raises() -> None:
+            raise ValueError("internal detail")
+
+        with patch.object(audit_mod.logger, "error") as mock_err, \
+                patch.object(audit_mod.logger, "info") as mock_info, \
+                self.assertRaises(RuntimeError):
             server._run_tool(raises)
-        self.assertIn("descriptive error text", str(cm.exception))
+        mock_err.assert_not_called()
+        mock_info.assert_not_called()
 
     def test_runtime_error_cause_is_cleared(self) -> None:
         """RuntimeError propagated through _run_tool must have __cause__ cleared."""
@@ -338,7 +367,8 @@ class TestRunTool(unittest.TestCase):
             raise MemoryError("OOM")
         with self.assertRaises(RuntimeError) as cm:
             server._run_tool(raises)
-        self.assertIn("OOM", str(cm.exception))
+        # Internal details (OOM) are withheld from the caller for safety
+        self.assertNotIn("OOM", str(cm.exception))
 
 
 # ---------------------------------------------------------------------------
@@ -432,6 +462,16 @@ class TestIssueDetailsModelValidator(unittest.TestCase):
         from ah_mcp.models import IssueDetails
         with self.assertRaises(ValidationError):
             IssueDetails.model_validate({"kind": "public", "functions": []})
+
+    def test_non_dict_input_raises_validation_error(self) -> None:
+        """_parse_data_by_kind must raise a clear error on non-dict input."""
+        from pydantic import ValidationError
+
+        from ah_mcp.models import IssueDetails
+        for bad_input in [["item"], "string", 42, None]:
+            with self.subTest(bad_input=bad_input), \
+                    self.assertRaises((ValidationError, TypeError)):
+                IssueDetails.model_validate(bad_input)
 
     def test_non_empty_functions_list(self) -> None:
         from ah_mcp.models import IssueDetails
@@ -723,6 +763,9 @@ class TestToolCallsUnderlyingApi(unittest.TestCase):
         exc = cm.exception
         self.assertIsNone(exc.__cause__)
         self.assertIsNone(exc.__context__)
+        # Internal error details must not be forwarded to the MCP client
+        self.assertNotIn("network failure", str(exc))
+        self.assertEqual(str(exc), "An internal error occurred. Details have been logged.")
 
 
 # ---------------------------------------------------------------------------

@@ -6,11 +6,14 @@ This module handles 429 and 5xx responses, which the library does not retry.
 
 from __future__ import annotations
 
+import logging
 import random
 import time
 from collections.abc import Callable
 
 import httpx
+
+logger = logging.getLogger(__name__)
 
 _RETRYABLE_STATUS_CODES: frozenset[int] = frozenset({429, 500, 502, 503, 504})
 _MAX_RETRIES: int = 3
@@ -53,14 +56,28 @@ def get_with_retry(request_fn: Callable[[], httpx.Response]) -> httpx.Response:
 def _retry_delay(response: httpx.Response, attempt: int) -> float:
     """Compute sleep duration in seconds before the next retry.
 
-    Uses ``Retry-After`` header value (as integer seconds) when present; falls
-    back to full-jitter exponential backoff: ``uniform(0, min(30, 1.0 * 2^attempt))``.
+    Uses ``Retry-After`` header value (as integer seconds) when present, capped
+    at ``_MAX_DELAY`` to prevent a malicious server from causing arbitrarily long
+    sleeps (DoS amplification).  Falls back to full-jitter exponential backoff
+    when the header is absent or not an integer: ``uniform(0, min(30, 1.0 * 2^attempt))``.
+
+    Note: RFC 7231 HTTP-date format values are not parsed; they are treated as
+    absent and trigger the jitter fallback (with a debug log).
     """
     retry_after = response.headers.get("Retry-After")
     if retry_after is not None:
         try:
-            return float(int(retry_after))
+            requested = float(int(retry_after))
+            capped = max(0.0, min(requested, _MAX_DELAY))
+            if capped < requested:
+                logger.debug(
+                    "Retry-After value %s exceeds max delay %s; capping to %s",
+                    requested,
+                    _MAX_DELAY,
+                    capped,
+                )
+            return capped
         except ValueError:
-            pass
+            logger.debug("Could not parse Retry-After header %r; using jitter backoff", retry_after)
     cap = min(_MAX_DELAY, _BASE_DELAY * (2**attempt))
     return random.uniform(0, cap)
