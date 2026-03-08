@@ -794,14 +794,15 @@ class TestPaginationParams(unittest.TestCase):
 
     def test_get_version_comments_forwards_limit_and_offset(self) -> None:
         mock_api = MagicMock(return_value=[])
+        mock_args_cls = MagicMock()
         mock_ctx = _make_ctx_mock()
         with patch.object(server, "_ctx", return_value=mock_ctx), \
-                patch.object(server, "api_get_version_comments", mock_api):
+                patch.object(server, "api_get_version_comments", mock_api), \
+                patch.object(server, "GetVersionCommentsArgs", mock_args_cls):
             server.get_version_comments(
                 organization_id=1, project_id=10, version_id=3, limit=75, offset=25
             )
-        # GetVersionCommentsArgs is a stub Mock; check the kwargs it was constructed with.
-        kwargs = server.GetVersionCommentsArgs.call_args.kwargs
+        kwargs = mock_args_cls.call_args.kwargs
         self.assertEqual(kwargs["limit"], 75)
         self.assertEqual(kwargs["offset"], 25)
 
