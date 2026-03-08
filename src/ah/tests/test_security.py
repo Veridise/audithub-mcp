@@ -215,11 +215,8 @@ class TestOversizedAndAdversarialStrings(unittest.TestCase):
     def _call_task_logs(self, step_code: str) -> None:
         import ah_mcp.audit as audit_mod
 
-        api_mock = sys.modules["audithub_client.api.get_task_logs"]
-        api_mock.api_get_task_logs.return_value = []
-        api_mock.GetTaskLogsArgs = MagicMock(return_value=MagicMock())
-
-        with patch.object(audit_mod.logger, "info") as mock_log_info:
+        with patch.object(server, "api_get_task_logs", return_value=[]), \
+                patch.object(audit_mod.logger, "info") as mock_log_info:
             server.get_task_logs(organization_id=1, task_id=1, step_code=step_code)
             # step_code must not appear in any audit log call
             for call in mock_log_info.call_args_list:
@@ -294,13 +291,13 @@ class TestGetMyOrganizationsFiltering(unittest.TestCase):
     """get_my_organizations only returns orgs present in the allowlist."""
 
     def test_filters_non_allowlisted_orgs(self) -> None:
-        api_mock = sys.modules["audithub_client.api.get_my_organizations"]
-        api_mock.api_get_my_organizations.return_value = [
+        orgs_data = [
             {"id": 1, "name": "Allowed", "gh_connected": False},
             {"id": 2, "name": "NotAllowed", "gh_connected": False},
             {"id": 999, "name": "AlsoNotAllowed", "gh_connected": False},
         ]
-        with patch("ah_mcp.server._ctx") as mock_ctx:
+        with patch.object(server, "api_get_my_organizations", return_value=orgs_data), \
+                patch("ah_mcp.server._ctx") as mock_ctx:
             mock_ctx.return_value = MagicMock()
             result = server.get_my_organizations()
         ids = [o.id for o in result]
@@ -309,11 +306,9 @@ class TestGetMyOrganizationsFiltering(unittest.TestCase):
         self.assertNotIn(999, ids)
 
     def test_empty_result_when_no_orgs_match(self) -> None:
-        api_mock = sys.modules["audithub_client.api.get_my_organizations"]
-        api_mock.api_get_my_organizations.return_value = [
-            {"id": 999, "name": "NotAllowed", "gh_connected": False},
-        ]
-        with patch("ah_mcp.server._ctx") as mock_ctx:
+        orgs_data = [{"id": 999, "name": "NotAllowed", "gh_connected": False}]
+        with patch.object(server, "api_get_my_organizations", return_value=orgs_data), \
+                patch("ah_mcp.server._ctx") as mock_ctx:
             mock_ctx.return_value = MagicMock()
             result = server.get_my_organizations()
         self.assertEqual(result, [])
