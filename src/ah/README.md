@@ -118,7 +118,7 @@ Add the same `mcpServers` block to your ChatGPT Desktop MCP configuration. The f
 | `get_project_issue` | Get a specific issue from a project |
 | `get_project_comments` | Get all comments for a project across all versions |
 
-All tools return JSON strings. On error they return `{"error": "...", "type": "api_error" | "unexpected_error"}` rather than raising.
+All tools return typed Python objects. On error, tools raise ``RuntimeError`` with a plain-text message; the MCP protocol surfaces this as an error response to the caller.
 
 ## Security model
 

@@ -48,3 +48,10 @@ jobs:
 
       - name: Tests
         run: python -m pytest
+        env:
+          AUDITHUB_BASE_URL: ${{ secrets.AUDITHUB_BASE_URL }}
+          AUDITHUB_OIDC_CONFIGURATION_URL: ${{ secrets.AUDITHUB_OIDC_CONFIGURATION_URL }}
+          AUDITHUB_OIDC_CLIENT_ID: ${{ secrets.AUDITHUB_OIDC_CLIENT_ID }}
+          AUDITHUB_OIDC_CLIENT_SECRET: ${{ secrets.AUDITHUB_OIDC_CLIENT_SECRET }}
+          AH_ALLOWED_ORG_IDS: "84"
+          AH_ALLOWED_PROJECT_IDS: "275"

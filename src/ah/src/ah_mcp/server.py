@@ -70,8 +70,9 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+import time
 from collections.abc import Callable
-from typing import Annotated, Any
+from typing import Annotated
 
 from audithub_client.api.get_latest_version import GetLatestVersionArgs, api_get_latest_version
 from audithub_client.api.get_my_organizations import api_get_my_organizations
@@ -89,6 +90,7 @@ from audithub_client.library.net_utils import ensure_success, response_json
 from mcp.server.fastmcp import FastMCP
 from pydantic import Field, TypeAdapter
 
+from ah_mcp.audit import log_call_error, log_call_start, log_call_success
 from ah_mcp.models import (
     Comment,
     IssueDetails,
@@ -99,6 +101,7 @@ from ah_mcp.models import (
     Thread,
     Version,
 )
+from ah_mcp.retry import get_with_retry
 
 #: Positive integer type used for all AuditHub ID parameters.
 #: ``strict=True`` prevents string/float coercion; ``gt=0`` rejects zero and
@@ -152,9 +155,13 @@ def _parse_id_list(value: str, flag: str) -> frozenset[int]:
         SystemExit: If any token is not a valid integer.
     """
     try:
-        return frozenset(int(tok.strip()) for tok in value.split(",") if tok.strip())
+        ids = frozenset(int(tok.strip()) for tok in value.split(",") if tok.strip())
     except ValueError:
         sys.exit(f"Error: {flag} must be a comma-separated list of integers, got: {value!r}")
+    non_positive = [i for i in ids if i <= 0]
+    if non_positive:
+        sys.exit(f"Error: {flag} contains non-positive IDs: {sorted(non_positive)}")
+    return ids
 
 
 def _build_context() -> AuditHubContext:
@@ -210,7 +217,8 @@ def _assert_org_allowed(organization_id: int) -> None:
     """
     if organization_id not in _allowed_org_ids:
         raise RuntimeError(
-            f"Organization ID {organization_id} is not in the configured allowlist."
+            f"Organization ID {organization_id} is not in the configured allowlist. "
+            "Call get_my_organizations to find the IDs you have access to."
         )
 
 
@@ -224,7 +232,8 @@ def _assert_project_allowed(project_id: int) -> None:
     """
     if project_id not in _allowed_project_ids:
         raise RuntimeError(
-            f"Project ID {project_id} is not in the configured allowlist."
+            f"Project ID {project_id} is not in the configured allowlist. "
+            "Use get_project after finding a valid organization ID."
         )
 
 
@@ -233,7 +242,7 @@ def _assert_project_allowed(project_id: int) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _get(path: str, params: dict[str, int] | None = None) -> Any:
+def _get(path: str, params: dict[str, int] | None = None) -> object:
     """Issue an authenticated HTTP **GET** request to *path* on the AuditHub API.
 
     This is the only HTTP helper in this module.  It is deliberately hard-wired
@@ -252,12 +261,16 @@ def _get(path: str, params: dict[str, int] | None = None) -> Any:
         RuntimeError: If credentials are missing, the OIDC flow fails, or the
             server returns a non-2xx status.
     """
+    if not path.startswith("/"):
+        raise ValueError(f"_get() path must start with '/': {path!r}")
     ctx = _ctx()
-    response = authentication_retry(
-        ctx,
-        GET,
-        url=f"{ctx.base_url.rstrip('/')}{path}",
-        params=params,
+    response = get_with_retry(
+        lambda: authentication_retry(
+            ctx,
+            GET,
+            url=f"{ctx.base_url.rstrip('/')}{path}",
+            params=params,
+        )
     )
     ensure_success(response)
     return response_json(response)
@@ -266,9 +279,20 @@ def _get(path: str, params: dict[str, int] | None = None) -> Any:
 def _build_pagination_params(limit: int | None, offset: int | None) -> dict[str, int] | None:
     """Build a query-params dict from optional limit/offset values.
 
+    Validates that *limit* and *offset* are non-negative when provided.
+    This enforces the ``ge=0`` constraint at the Python call boundary as well
+    as at the FastMCP schema boundary.
+
     Returns ``None`` when both are ``None`` so callers can pass the result
     directly to ``_get(..., params=...)`` without a separate ``or None`` guard.
+
+    Raises:
+        ValueError: If *limit* or *offset* is negative.
     """
+    if limit is not None and limit < 0:
+        raise ValueError(f"limit must be >= 0, got {limit!r}")
+    if offset is not None and offset < 0:
+        raise ValueError(f"offset must be >= 0, got {offset!r}")
     params: dict[str, int] = {}
     if limit is not None:
         params["limit"] = limit
@@ -277,7 +301,12 @@ def _build_pagination_params(limit: int | None, offset: int | None) -> dict[str,
     return params or None
 
 
-def _run_tool[T](fn: Callable[[], T]) -> T:
+def _run_tool[T](
+    fn: Callable[[], T],
+    *,
+    tool_name: str = "",
+    safe_args: dict[str, object] | None = None,
+) -> T:
     """Execute a tool function, sanitizing exceptions to prevent credential leakage.
 
     ``audithub_client``'s OIDC library may include credential material in
@@ -287,11 +316,17 @@ def _run_tool[T](fn: Callable[[], T]) -> T:
     cause — before they reach FastMCP's error handler.
 
     ``RuntimeError`` (raised by allowlist checks, missing config, and
-    AuditHub API errors) propagates unchanged; it never contains raw
-    credential values.
+    AuditHub API errors) propagates with its ``__context__`` cleared to
+    prevent chained credential leakage; it never contains raw credential values.
+
+    When *tool_name* is provided, call start/success/error events are emitted
+    to the ``ah_mcp.audit`` logger.  *safe_args* is included in the start
+    event; never pass credential values or step_code content here.
 
     Args:
         fn: Zero-argument callable returning the tool's result.
+        tool_name: MCP tool name for audit logging.  Empty string disables logging.
+        safe_args: Arguments safe to include in audit log entries.
 
     Returns:
         The return value of *fn*.
@@ -299,13 +334,27 @@ def _run_tool[T](fn: Callable[[], T]) -> T:
     Raises:
         RuntimeError: On any failure, with a safe error message.
     """
+    if tool_name:
+        log_call_start(tool_name, safe_args or {})
+    start = time.monotonic()
     sanitized: RuntimeError | None = None
     try:
-        return fn()
-    except RuntimeError:
+        result = fn()
+        if tool_name:
+            log_call_success(tool_name, (time.monotonic() - start) * 1000)
+        return result
+    except RuntimeError as exc:
+        if tool_name:
+            log_call_error(tool_name, str(exc), (time.monotonic() - start) * 1000)
+        exc.__context__ = None
+        exc.__cause__ = None
         raise
     except Exception as exc:
-        sanitized = RuntimeError(str(exc))
+        elapsed_ms = (time.monotonic() - start) * 1000
+        msg = str(exc)
+        if tool_name:
+            log_call_error(tool_name, msg, elapsed_ms)
+        sanitized = RuntimeError(msg)
     raise sanitized  # raised outside except block so __context__ is not set
 
 
@@ -316,10 +365,14 @@ def _run_tool[T](fn: Callable[[], T]) -> T:
 
 @mcp.tool()
 def get_my_organizations() -> list[Organization]:
-    """List all AuditHub organizations the authenticated user belongs to."""
+    """List AuditHub organizations the authenticated user belongs to.
+
+    Returns only organizations whose IDs are in the configured allowlist.
+    """
     def _run() -> list[Organization]:
-        return _org_ta.validate_python(api_get_my_organizations(_ctx()))
-    return _run_tool(_run)
+        orgs = _org_ta.validate_python(api_get_my_organizations(_ctx()))
+        return [o for o in orgs if o.id in _allowed_org_ids]
+    return _run_tool(_run, tool_name="get_my_organizations", safe_args={})
 
 
 @mcp.tool()
@@ -338,7 +391,11 @@ def get_project(organization_id: _AhId, project_id: _AhId) -> Project:
                 _ctx(), GetProjectArgs(organization_id=organization_id, project_id=project_id)
             )
         )
-    return _run_tool(_run)
+    return _run_tool(
+        _run,
+        tool_name="get_project",
+        safe_args={"organization_id": organization_id, "project_id": project_id},
+    )
 
 
 @mcp.tool()
@@ -358,7 +415,11 @@ def get_latest_version(organization_id: _AhId, project_id: _AhId) -> Version:
                 GetLatestVersionArgs(organization_id=organization_id, project_id=project_id),
             )
         )
-    return _run_tool(_run)
+    return _run_tool(
+        _run,
+        tool_name="get_latest_version",
+        safe_args={"organization_id": organization_id, "project_id": project_id},
+    )
 
 
 @mcp.tool()
@@ -376,7 +437,11 @@ def get_task_info(organization_id: _AhId, task_id: _AhId) -> Task:
                 _ctx(), GetTaskInfoArgs(organization_id=organization_id, task_id=task_id)
             )
         )
-    return _run_tool(_run)
+    return _run_tool(
+        _run,
+        tool_name="get_task_info",
+        safe_args={"organization_id": organization_id, "task_id": task_id},
+    )
 
 
 @mcp.tool()
@@ -387,7 +452,7 @@ def get_task_logs(organization_id: _AhId, task_id: _AhId, step_code: str) -> lis
         organization_id: Numeric AuditHub organization ID.
         task_id: Numeric AuditHub task ID.
         step_code: Step code identifying which task step's logs to fetch.
-            Use ``get_task_info`` to discover valid step codes for a task.
+            Pass the value of ``TaskStep.code`` from ``get_task_info`` response.
     """
     def _run() -> list[str]:
         _assert_org_allowed(organization_id)
@@ -399,7 +464,12 @@ def get_task_logs(organization_id: _AhId, task_id: _AhId, step_code: str) -> lis
                 ),
             )
         )
-    return _run_tool(_run)
+    # step_code is intentionally excluded from safe_args — it may contain file paths
+    return _run_tool(
+        _run,
+        tool_name="get_task_logs",
+        safe_args={"organization_id": organization_id, "task_id": task_id},
+    )
 
 
 @mcp.tool()
@@ -407,8 +477,8 @@ def get_version_comments(
     organization_id: _AhId,
     project_id: _AhId,
     version_id: _AhId,
-    limit: int | None = 200,
-    offset: int | None = 0,
+    limit: Annotated[int, Field(ge=0)] | None = 200,
+    offset: Annotated[int, Field(ge=0)] | None = 0,
 ) -> list[Comment]:
     """Get comments for a specific project version.
 
@@ -420,6 +490,10 @@ def get_version_comments(
         offset: Pagination offset (default 0).
     """
     def _run() -> list[Comment]:
+        if limit is not None and limit < 0:
+            raise ValueError(f"limit must be >= 0, got {limit!r}")
+        if offset is not None and offset < 0:
+            raise ValueError(f"offset must be >= 0, got {offset!r}")
         _assert_org_allowed(organization_id)
         _assert_project_allowed(project_id)
         return _comment_ta.validate_python(
@@ -434,7 +508,17 @@ def get_version_comments(
                 ),
             )
         )
-    return _run_tool(_run)
+    return _run_tool(
+        _run,
+        tool_name="get_version_comments",
+        safe_args={
+            "organization_id": organization_id,
+            "project_id": project_id,
+            "version_id": version_id,
+            "limit": limit,
+            "offset": offset,
+        },
+    )
 
 
 @mcp.tool()
@@ -442,8 +526,8 @@ def get_version_comment_threads(
     organization_id: _AhId,
     project_id: _AhId,
     version_id: _AhId,
-    limit: int | None = 200,
-    offset: int | None = 0,
+    limit: Annotated[int, Field(ge=0)] | None = 200,
+    offset: Annotated[int, Field(ge=0)] | None = 0,
 ) -> list[Thread]:
     """Get comment threads for a specific project version.
 
@@ -457,21 +541,32 @@ def get_version_comment_threads(
     def _run() -> list[Thread]:
         _assert_org_allowed(organization_id)
         _assert_project_allowed(project_id)
-        return _thread_ta.validate_python(
-            _get(
-                f"/organizations/{organization_id}/projects/{project_id}/versions/{version_id}/comment-threads",
-                params=_build_pagination_params(limit, offset),
-            )
+        path = (
+            f"/organizations/{organization_id}/projects/{project_id}"
+            f"/versions/{version_id}/comment-threads"
         )
-    return _run_tool(_run)
+        return _thread_ta.validate_python(
+            _get(path, params=_build_pagination_params(limit, offset))
+        )
+    return _run_tool(
+        _run,
+        tool_name="get_version_comment_threads",
+        safe_args={
+            "organization_id": organization_id,
+            "project_id": project_id,
+            "version_id": version_id,
+            "limit": limit,
+            "offset": offset,
+        },
+    )
 
 
 @mcp.tool()
 def get_project_issues(
     organization_id: _AhId,
     project_id: _AhId,
-    limit: int | None = 200,
-    offset: int | None = 0,
+    limit: Annotated[int, Field(ge=0)] | None = 200,
+    offset: Annotated[int, Field(ge=0)] | None = 0,
 ) -> list[IssueForList]:
     """Get all issues for an AuditHub project.
 
@@ -490,12 +585,27 @@ def get_project_issues(
                 params=_build_pagination_params(limit, offset),
             )
         )
-    return _run_tool(_run)
+    return _run_tool(
+        _run,
+        tool_name="get_project_issues",
+        safe_args={
+            "organization_id": organization_id,
+            "project_id": project_id,
+            "limit": limit,
+            "offset": offset,
+        },
+    )
 
 
 @mcp.tool()
 def get_project_issue(organization_id: _AhId, project_id: _AhId, issue_id: _AhId) -> IssueDetails:
     """Get a specific issue from an AuditHub project.
+
+    Returns an ``IssueDetails`` with a ``kind`` field (``"public"`` or
+    ``"complete"``).  When ``kind == "complete"``, ``data`` is an
+    ``IssueComplete`` containing audit metadata (``created_by``, ``raised_by``,
+    ``promoted_findings``, etc.).  When ``kind == "public"``, ``data`` is a
+    base ``Issue`` with only the public fields.
 
     Args:
         organization_id: Numeric AuditHub organization ID.
@@ -508,17 +618,29 @@ def get_project_issue(organization_id: _AhId, project_id: _AhId, issue_id: _AhId
         return IssueDetails.model_validate(
             _get(f"/organizations/{organization_id}/projects/{project_id}/issues/{issue_id}")
         )
-    return _run_tool(_run)
+    return _run_tool(
+        _run,
+        tool_name="get_project_issue",
+        safe_args={
+            "organization_id": organization_id,
+            "project_id": project_id,
+            "issue_id": issue_id,
+        },
+    )
 
 
 @mcp.tool()
 def get_project_comments(
     organization_id: _AhId,
     project_id: _AhId,
-    limit: int | None = 200,
-    offset: int | None = 0,
+    limit: Annotated[int, Field(ge=0)] | None = 200,
+    offset: Annotated[int, Field(ge=0)] | None = 0,
 ) -> list[Comment]:
     """Get all comments for an AuditHub project across all versions.
+
+    Use this when you do not have a specific version ID.  Prefer
+    ``get_version_comments`` when you already have a ``version_id``; it is
+    more targeted and returns the same ``Comment`` shape.
 
     Args:
         organization_id: Numeric AuditHub organization ID.
@@ -535,7 +657,16 @@ def get_project_comments(
                 params=_build_pagination_params(limit, offset),
             )
         )
-    return _run_tool(_run)
+    return _run_tool(
+        _run,
+        tool_name="get_project_comments",
+        safe_args={
+            "organization_id": organization_id,
+            "project_id": project_id,
+            "limit": limit,
+            "offset": offset,
+        },
+    )
 
 
 # ---------------------------------------------------------------------------

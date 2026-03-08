@@ -48,6 +48,7 @@ ignore_missing_imports = true
 testpaths = ["tests"]
 asyncio_mode = "auto"
 addopts = "-v"
+markers = ["integration: marks tests as integration tests (require live API)"]
 
 [tool.coverage.run]
 source = ["src/ah_mcp"]

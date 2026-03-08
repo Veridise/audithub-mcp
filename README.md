@@ -26,33 +26,9 @@ uv pip install -e src/ah
 
 Copy `src/ah/.env.example` to `src/ah/.env` and fill in your AuditHub credentials.
 
-### Agents
+### Configure your agent
 
-Add to your agent's MCP configuration (e.g. `.codex/config.json` for Codex, `.claude/mcp.json` for Claude Code):
-
-```json
-{
-  "mcpServers": {
-    "ah": {
-      "command": "ah-mcp",
-      "args": [
-        "--allowed-org-ids", "YOUR_ORG_ID",
-        "--allowed-project-ids", "YOUR_PROJECT_ID_1,YOUR_PROJECT_ID_2"
-      ],
-      "env": {
-        "AUDITHUB_BASE_URL": "https://audithub.veridise.com/api/v1",
-        "AUDITHUB_OIDC_CONFIGURATION_URL": "https://YOUR_IDP/.well-known/openid-configuration",
-        "AUDITHUB_OIDC_CLIENT_ID": "YOUR_CLIENT_ID",
-        "AUDITHUB_OIDC_CLIENT_SECRET": "YOUR_CLIENT_SECRET"
-      }
-    }
-  }
-}
-```
-
-### OpenAI Codex
-
-Add to your `.codex/config.json`:
+Add to your agent's MCP configuration file (`.codex/config.json` for Codex, `.claude/mcp.json` for Claude Code, or your ChatGPT Desktop MCP config):
 
 ```json
 {
@@ -73,10 +49,6 @@ Add to your `.codex/config.json`:
   }
 }
 ```
-
-### ChatGPT Desktop
-
-Add the same `mcpServers` block to your ChatGPT Desktop MCP configuration file. The format is identical to the example above.
 
 ## Security model
 

@@ -294,16 +294,18 @@ class TestRunTool(unittest.TestCase):
 
     def test_propagates_runtime_error_unchanged(self) -> None:
         original = RuntimeError("allowlist rejection")
+        def _raise() -> None:
+            raise original
         with self.assertRaises(RuntimeError) as cm:
-            server._run_tool(lambda: (_ for _ in ()).throw(original))
+            server._run_tool(_raise)
         self.assertIs(cm.exception, original)
+        self.assertIsNone(cm.exception.__context__)
 
     def test_sanitizes_non_runtime_error(self) -> None:
         def raises() -> None:
             raise ValueError("unexpected detail")
-        with self.assertRaises(RuntimeError) as cm:
+        with self.assertRaises(RuntimeError):
             server._run_tool(raises)
-        self.assertIn("unexpected detail", str(cm.exception))
 
     def test_sanitized_exception_has_no_cause(self) -> None:
         """Chained context (__cause__ / __context__) must be stripped."""
@@ -313,6 +315,23 @@ class TestRunTool(unittest.TestCase):
             server._run_tool(raises)
         self.assertIsNone(cm.exception.__cause__)
         self.assertIsNone(cm.exception.__context__)
+
+    def test_sanitized_exception_preserves_message(self) -> None:
+        """The sanitized RuntimeError must carry the original exception's message."""
+        def raises() -> None:
+            raise ValueError("descriptive error text")
+        with self.assertRaises(RuntimeError) as cm:
+            server._run_tool(raises)
+        self.assertIn("descriptive error text", str(cm.exception))
+
+    def test_runtime_error_cause_is_cleared(self) -> None:
+        """RuntimeError propagated through _run_tool must have __cause__ cleared."""
+        original = RuntimeError("allowlist rejection")
+        def _raise() -> None:
+            raise original
+        with self.assertRaises(RuntimeError) as cm:
+            server._run_tool(_raise)
+        self.assertIsNone(cm.exception.__cause__)
 
     def test_memory_error_is_sanitized(self) -> None:
         def raises() -> None:
@@ -347,18 +366,95 @@ class TestReadOnlyToolSurface(unittest.TestCase):
                 f"Tool '{name}' does not start with 'get_' — it may be a mutation tool",
             )
 
-    def test_no_mutation_tool_names(self) -> None:
-        mutation_prefixes = ("create_", "update_", "delete_", "patch_", "post_", "put_", "set_")
-        for name in self._tool_names():
-            for prefix in mutation_prefixes:
-                self.assertFalse(
-                    name.startswith(prefix),
-                    f"Unexpected mutation tool registered: '{name}'",
-                )
 
 
 # ---------------------------------------------------------------------------
-# 4. _build_pagination_params helper
+# 4. IssueDetails model validator
+# ---------------------------------------------------------------------------
+
+
+class TestIssueDetailsModelValidator(unittest.TestCase):
+    """_parse_data_by_kind selects Issue or IssueComplete based on kind."""
+
+    _ISSUE_COMPLETE_DICT = {
+        "kind": "complete",
+        "data": {
+            "id": 7,
+            "title": "Bug",
+            "status": "open",
+            "description": "A bug",
+            "likelihood": 3,
+            "impact": 4,
+            "severity": 5,
+            "revision_id": 1,
+            "affected_files": [{"version_id": 42, "relative_path": "src/Foo.sol"}],
+            "type": [1],
+            "created_at": _NOW.isoformat(),
+            "last_updated_at": _NOW.isoformat(),
+            "created_by": "alice",
+            "last_updated_by": "bob",
+            "internally_shared": True,
+            "externally_shared": False,
+            "raised_by": ["alice"],
+        },
+        "functions": [],
+    }
+
+    def test_kind_public_produces_issue_instance(self) -> None:
+        from ah_mcp.models import Issue, IssueDetails
+        result = IssueDetails.model_validate(_ISSUE_DETAILS_DICT)
+        self.assertIsInstance(result.data, Issue)
+        self.assertEqual(result.kind, "public")
+
+    def test_kind_complete_produces_issue_complete_instance(self) -> None:
+        from ah_mcp.models import IssueComplete, IssueDetails
+        result = IssueDetails.model_validate(self._ISSUE_COMPLETE_DICT)
+        self.assertIsInstance(result.data, IssueComplete)
+        self.assertEqual(result.kind, "complete")
+
+    def test_kind_complete_data_has_audit_fields(self) -> None:
+        from ah_mcp.models import IssueDetails
+        result = IssueDetails.model_validate(self._ISSUE_COMPLETE_DICT)
+        self.assertEqual(result.data.created_by, "alice")  # type: ignore[union-attr]
+
+    def test_unknown_kind_rejected_by_pydantic(self) -> None:
+        """Unknown kind values are rejected before the model validator runs."""
+        from pydantic import ValidationError
+
+        from ah_mcp.models import IssueDetails
+        payload = dict(_ISSUE_DETAILS_DICT, kind="restricted")
+        with self.assertRaises(ValidationError):
+            IssueDetails.model_validate(payload)
+
+    def test_missing_data_raises_validation_error(self) -> None:
+        from pydantic import ValidationError
+
+        from ah_mcp.models import IssueDetails
+        with self.assertRaises(ValidationError):
+            IssueDetails.model_validate({"kind": "public", "functions": []})
+
+    def test_non_empty_functions_list(self) -> None:
+        from ah_mcp.models import IssueDetails
+        payload = dict(
+            _ISSUE_DETAILS_DICT,
+            functions=[{
+                "id": 1,
+                "code": "resolve",
+                "caption": "Resolve",
+                "has_comment": False,
+                "has_pr": False,
+                "optional_comment": False,
+                "pre_populated_extra": None,
+                "available_to_developers": True,
+            }],
+        )
+        result = IssueDetails.model_validate(payload)
+        self.assertEqual(len(result.functions), 1)
+        self.assertEqual(result.functions[0].code, "resolve")
+
+
+# ---------------------------------------------------------------------------
+# 5. _build_pagination_params helper
 # ---------------------------------------------------------------------------
 
 
@@ -384,6 +480,10 @@ class TestBuildPaginationParams(unittest.TestCase):
     def test_zero_offset_included(self) -> None:
         result = server._build_pagination_params(200, 0)
         self.assertEqual(result, {"limit": 200, "offset": 0})
+
+    def test_zero_limit_included(self) -> None:
+        result = server._build_pagination_params(0, None)
+        self.assertEqual(result, {"limit": 0})
 
 
 # ---------------------------------------------------------------------------
@@ -413,21 +513,12 @@ class TestGetHelperIsReadOnly(unittest.TestCase):
         http_method = call_args.args[1]
         self.assertEqual(http_method, "GET")
 
-    def test_never_uses_post(self) -> None:
-        call_args = self._call_get()
-        self.assertNotEqual(call_args.args[1], "POST")
-
-    def test_never_uses_patch(self) -> None:
-        call_args = self._call_get()
-        self.assertNotEqual(call_args.args[1], "PATCH")
-
-    def test_never_uses_put(self) -> None:
-        call_args = self._call_get()
-        self.assertNotEqual(call_args.args[1], "PUT")
-
-    def test_never_uses_delete(self) -> None:
-        call_args = self._call_get()
-        self.assertNotEqual(call_args.args[1], "DELETE")
+    def test_raises_if_path_missing_leading_slash(self) -> None:
+        mock_ctx = _make_ctx_mock()
+        with patch.object(server, "_ctx", return_value=mock_ctx), \
+                self.assertRaises(ValueError) as cm:
+            server._get("organizations/1")
+        self.assertIn("/", str(cm.exception))
 
     def test_strips_trailing_slash_from_base_url(self) -> None:
         call_args = self._call_get(path="/foo", base_url="https://example.com/api/v1/")
@@ -492,6 +583,30 @@ class TestToolCallsUnderlyingApi(unittest.TestCase):
         mock_api.assert_called_once_with(mock_ctx)
         self.assertIsInstance(result, list)
         self.assertIsInstance(result[0], Organization)
+        self.assertEqual(result[0].id, 1)
+
+    def test_get_my_organizations_returns_empty_list(self) -> None:
+        mock_api = MagicMock(return_value=[])
+        mock_ctx = _make_ctx_mock()
+        with patch.object(server, "_ctx", return_value=mock_ctx), \
+                patch.object(server, "api_get_my_organizations", mock_api):
+            result = server.get_my_organizations()
+        self.assertEqual(result, [])
+
+    def test_get_my_organizations_filters_by_allowlist(self) -> None:
+        """Orgs not in the allowlist must be excluded from the result."""
+        allowed_org = dict(_ORG_DICT, id=1)
+        disallowed_org = dict(_ORG_DICT, id=99, name="Other")
+        mock_api = MagicMock(return_value=[allowed_org, disallowed_org])
+        mock_ctx = _make_ctx_mock()
+        server._allowed_org_ids = frozenset({1})
+        try:
+            with patch.object(server, "_ctx", return_value=mock_ctx), \
+                    patch.object(server, "api_get_my_organizations", mock_api):
+                result = server.get_my_organizations()
+        finally:
+            server._allowed_org_ids = frozenset()
+        self.assertEqual(len(result), 1)
         self.assertEqual(result[0].id, 1)
 
     def test_get_project_returns_project(self) -> None:
@@ -597,6 +712,18 @@ class TestToolCallsUnderlyingApi(unittest.TestCase):
             server.get_my_organizations()
         self.assertIn("403", str(cm.exception))
 
+    def test_non_runtime_error_from_api_is_sanitized(self) -> None:
+        """Non-RuntimeError exceptions must be re-raised as RuntimeError with no chain."""
+        mock_api = MagicMock(side_effect=OSError("network failure"))
+        mock_ctx = _make_ctx_mock()
+        with patch.object(server, "_ctx", return_value=mock_ctx), \
+                patch.object(server, "api_get_my_organizations", mock_api), \
+                self.assertRaises(RuntimeError) as cm:
+            server.get_my_organizations()
+        exc = cm.exception
+        self.assertIsNone(exc.__cause__)
+        self.assertIsNone(exc.__context__)
+
 
 # ---------------------------------------------------------------------------
 # 7. Pagination parameter forwarding
@@ -621,6 +748,19 @@ class TestPaginationParams(unittest.TestCase):
         params = mock_get.call_args.kwargs["params"]
         self.assertEqual(params["limit"], 50)
         self.assertEqual(params["offset"], 100)
+
+    def test_get_version_comments_forwards_limit_and_offset(self) -> None:
+        mock_api = MagicMock(return_value=[])
+        mock_ctx = _make_ctx_mock()
+        with patch.object(server, "_ctx", return_value=mock_ctx), \
+                patch.object(server, "api_get_version_comments", mock_api):
+            server.get_version_comments(
+                organization_id=1, project_id=10, version_id=3, limit=75, offset=25
+            )
+        # GetVersionCommentsArgs is a stub Mock; check the kwargs it was constructed with.
+        kwargs = server.GetVersionCommentsArgs.call_args.kwargs
+        self.assertEqual(kwargs["limit"], 75)
+        self.assertEqual(kwargs["offset"], 25)
 
     def test_get_version_comment_threads_forwards_limit_and_offset(self) -> None:
         mock_get = MagicMock(return_value=[])
@@ -647,6 +787,15 @@ class TestPaginationParams(unittest.TestCase):
         params_arg = mock_get.call_args.kwargs["params"]
         self.assertIsNone(params_arg)
 
+    def test_default_limit_and_offset_forwarded(self) -> None:
+        """Default limit=200, offset=0 must be forwarded to the API."""
+        mock_get = MagicMock(return_value=[])
+        with patch.object(server, "_get", mock_get):
+            server.get_project_issues(organization_id=1, project_id=10)
+        params = mock_get.call_args.kwargs["params"]
+        self.assertEqual(params["limit"], 200)
+        self.assertEqual(params["offset"], 0)
+
 
 # ---------------------------------------------------------------------------
 # 8. Allowlist configuration
@@ -671,6 +820,14 @@ class TestParseIdList(unittest.TestCase):
 
     def test_empty_string_returns_empty_frozenset(self) -> None:
         self.assertEqual(server._parse_id_list("", "flag"), frozenset())
+
+    def test_zero_id_exits(self) -> None:
+        with self.assertRaises(SystemExit):
+            server._parse_id_list("1,0,3", "flag")
+
+    def test_negative_id_exits(self) -> None:
+        with self.assertRaises(SystemExit):
+            server._parse_id_list("1,-5,3", "flag")
 
 
 class TestMainAllowlistValidation(unittest.TestCase):
@@ -806,17 +963,31 @@ class TestAllowlistEnforcement(unittest.TestCase):
     def test_get_project_comments_blocks_unlisted_project(self) -> None:
         self._assert_blocked(server.get_project_comments, organization_id=1, project_id=99)
 
+    def test_get_task_logs_blocks_unlisted_org(self) -> None:
+        self._assert_blocked(server.get_task_logs, organization_id=99, task_id=1, step_code="s")
+
+    def test_get_version_comment_threads_blocks_unlisted_project(self) -> None:
+        self._assert_blocked(
+            server.get_version_comment_threads, organization_id=1, project_id=99, version_id=1
+        )
+
+    def test_get_project_issues_blocks_unlisted_project(self) -> None:
+        self._assert_blocked(server.get_project_issues, organization_id=1, project_id=99)
+
+    def test_get_project_comments_blocks_unlisted_org(self) -> None:
+        self._assert_blocked(server.get_project_comments, organization_id=99, project_id=10)
+
     def test_error_does_not_reveal_other_allowlisted_ids(self) -> None:
         """The error message must not leak the full allowlist contents."""
-        server._allowed_org_ids = frozenset({1, 2, 3})
+        server._allowed_org_ids = frozenset({100, 200, 300})
         with self.assertRaises(RuntimeError) as cm:
-            server.get_project(organization_id=99, project_id=10)
+            server.get_project(organization_id=999, project_id=10)
         error = str(cm.exception)
-        self.assertIn("99", error)
+        self.assertIn("999", error)
         # The full allowlist must not be disclosed to prevent enumeration
-        self.assertNotIn("1", error)
-        self.assertNotIn("2", error)
-        self.assertNotIn("3", error)
+        self.assertNotIn("100", error)
+        self.assertNotIn("200", error)
+        self.assertNotIn("300", error)
         self.assertNotIn("AUDITHUB", error)
 
     def test_network_not_called_on_allowlist_rejection(self) -> None:
@@ -927,10 +1098,7 @@ class TestFastMCPSchemaValidation(unittest.IsolatedAsyncioTestCase):
         """Valid integer IDs must pass Pydantic validation and reach the tool body."""
         mock_api = MagicMock(return_value=_PROJECT_DICT)
         with patch.object(server, "api_get_project", mock_api):
-            try:
-                await self._call("get_project", organization_id=1, project_id=10)
-            except Exception as e:
-                self.assertNotIn("validation error", str(e).lower())
+            await self._call("get_project", organization_id=1, project_id=10)
         mock_api.assert_called_once()
 
 
