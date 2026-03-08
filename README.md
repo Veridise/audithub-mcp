@@ -28,27 +28,22 @@ Copy `src/ah/.env.example` to `src/ah/.env` and fill in your AuditHub credential
 
 ### Configure your agent
 
+All credentials are loaded from your `.env` file — nothing secret goes in the agent config.
+
 Add to your agent's MCP configuration file (`.codex/config.json` for Codex, `.claude/mcp.json` for Claude Code, or your ChatGPT Desktop MCP config):
 
 ```json
 {
   "mcpServers": {
     "ah": {
-      "command": "ah-mcp",
-      "args": [
-        "--allowed-org-ids", "YOUR_ORG_ID",
-        "--allowed-project-ids", "YOUR_PROJECT_ID_1,YOUR_PROJECT_ID_2"
-      ],
-      "env": {
-        "AUDITHUB_BASE_URL": "https://audithub.veridise.com/api/v1",
-        "AUDITHUB_OIDC_CONFIGURATION_URL": "https://YOUR_IDP/.well-known/openid-configuration",
-        "AUDITHUB_OIDC_CLIENT_ID": "YOUR_CLIENT_ID",
-        "AUDITHUB_OIDC_CLIENT_SECRET": "YOUR_CLIENT_SECRET"
-      }
+      "command": "bash",
+      "args": ["-c", "set -a && source /absolute/path/to/ah.env && set +a && ah-mcp"]
     }
   }
 }
 ```
+
+Replace `/absolute/path/to/ah.env` with the actual path to your `.env` file (see `src/ah/.env.example`). The `.env` file should contain all credentials and allowlist settings; no secrets belong in the agent config file.
 
 ## Security model
 

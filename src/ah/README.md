@@ -42,66 +42,32 @@ CLI flags `--allowed-org-ids` and `--allowed-project-ids` override the correspon
 
 ## Running the server
 
+Copy `.env.example` to `.env`, fill in your values, then:
+
 ```bash
-# Using CLI flags
-ah-mcp --allowed-org-ids 1,2 --allowed-project-ids 10,20
-
-# Using environment variables
-export AH_ALLOWED_ORG_IDS=1,2
-export AH_ALLOWED_PROJECT_IDS=10,20
-ah-mcp
-
-# With a .env file (e.g. via direnv or dotenv)
-dotenv run ah-mcp --allowed-org-ids 1,2 --allowed-project-ids 10,20
+set -a && source .env && set +a && ah-mcp
 ```
 
-All four credential variables (`AUDITHUB_BASE_URL`, `AUDITHUB_OIDC_CONFIGURATION_URL`, `AUDITHUB_OIDC_CLIENT_ID`, `AUDITHUB_OIDC_CLIENT_SECRET`) must be present in the environment when the server starts. Missing variables cause an immediate exit with a clear error listing which variables are absent.
+All six variables in `.env` must be set before the server starts. Missing variables cause an immediate exit with a clear error listing which are absent.
 
 ## Configure for agents
 
-Add to your agent's MCP configuration (e.g. `.codex/config.json` for Codex, `.claude/mcp.json` for Claude Code):
+All credentials are loaded from your `.env` file — nothing secret goes in the agent config.
+
+Add to your agent's MCP configuration (e.g. `.codex/config.json` for Codex, `.claude/mcp.json` for Claude Code, or your ChatGPT Desktop MCP config):
 
 ```json
 {
   "mcpServers": {
     "ah": {
-      "command": "ah-mcp",
-      "args": ["--allowed-org-ids", "<org_id>", "--allowed-project-ids", "<proj_id1>,<proj_id2>"],
-      "env": {
-        "AUDITHUB_BASE_URL": "...",
-        "AUDITHUB_OIDC_CONFIGURATION_URL": "...",
-        "AUDITHUB_OIDC_CLIENT_ID": "...",
-        "AUDITHUB_OIDC_CLIENT_SECRET": "..."
-      }
+      "command": "bash",
+      "args": ["-c", "set -a && source /absolute/path/to/ah.env && set +a && ah-mcp"]
     }
   }
 }
 ```
 
-## Configure for OpenAI Codex
-
-Add to your `.codex/config.json`:
-
-```json
-{
-  "mcpServers": {
-    "ah": {
-      "command": "ah-mcp",
-      "args": ["--allowed-org-ids", "<org_id>", "--allowed-project-ids", "<proj_id1>,<proj_id2>"],
-      "env": {
-        "AUDITHUB_BASE_URL": "...",
-        "AUDITHUB_OIDC_CONFIGURATION_URL": "...",
-        "AUDITHUB_OIDC_CLIENT_ID": "...",
-        "AUDITHUB_OIDC_CLIENT_SECRET": "..."
-      }
-    }
-  }
-}
-```
-
-## Configure for ChatGPT Desktop
-
-Add the same `mcpServers` block to your ChatGPT Desktop MCP configuration. The format is identical to the example above.
+Replace `/absolute/path/to/ah.env` with the actual path to your `.env` file. Your `.env` file (see `.env.example`) holds all credentials and allowlist IDs; no secrets belong in the agent config file.
 
 ## Available MCP tools
 
@@ -130,30 +96,8 @@ All tools return typed Python objects. On error, tools raise ``RuntimeError`` wi
 ## Development
 
 ```bash
-# Run tests
-pytest
-
-# Run tests with coverage report
-pytest --cov --cov-report=term-missing
-
-# Lint
-ruff check src tests
-
-# Format
-ruff format src tests
-
-# Type-check
-mypy
-
-# Lint + type-check in one step
-make check
-```
-
-Or use the `Makefile`:
-
-```bash
 make help       # list all targets
 make dev-install
 make test
-make check
+make check      # lint + type-check
 ```
