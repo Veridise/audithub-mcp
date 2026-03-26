@@ -139,6 +139,9 @@ class UsersApi(_ApiBase):
 
 
 class ProjectsApi(_ApiBase):
+    async def get_projects_organizations_organization_id_projects_get(self, **kwargs):
+        raise NotImplementedError
+
     async def get_project_organizations_organization_id_projects_project_id_get(self, **kwargs):
         raise NotImplementedError
 

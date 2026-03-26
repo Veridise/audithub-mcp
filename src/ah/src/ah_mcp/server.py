@@ -34,7 +34,9 @@ from ah_mcp.models import (
     IssueDetails,
     IssueForList,
     Organization,
+    OrganizationNameIndexEntry,
     Project,
+    ProjectNameIndexEntry,
     Task,
     Thread,
     Version,
@@ -68,6 +70,7 @@ _org_ta = TypeAdapter(list[Organization])
 _comment_ta = TypeAdapter(list[Comment])
 _thread_ta = TypeAdapter(list[Thread])
 _issue_list_ta = TypeAdapter(list[IssueForList])
+_project_ta = TypeAdapter(list[Project])
 _str_list_ta = TypeAdapter(list[str])
 
 
@@ -149,6 +152,11 @@ def _slice_paginated[T](items: Sequence[T], limit: int | None, offset: int | Non
     return list(items[start:end])
 
 
+def _normalize_lookup_key(name: str) -> str:
+    """Normalize a user-visible name into a deterministic case-insensitive lookup key."""
+    return name.strip().casefold()
+
+
 async def _with_api_client[T](fn: Callable[[AuthenticatedApiClient], Awaitable[T]]) -> T:
     """Create an authenticated SDK client for a single tool invocation."""
     ctx = _ctx()
@@ -217,6 +225,29 @@ async def get_my_organizations() -> list[Organization]:
 
 
 @mcp.tool()
+async def get_organization_name_index() -> list[OrganizationNameIndexEntry]:
+    """List allowlisted AuditHub organizations as deterministic name lookup entries."""
+
+    async def _run() -> list[OrganizationNameIndexEntry]:
+        organizations = await _with_api_client(
+            lambda client: UsersApi(client).get_organizations_users_myorganizations_get()
+        )
+        orgs = _org_ta.validate_python(organizations)
+        entries = [
+            OrganizationNameIndexEntry(
+                id=org.id,
+                name=org.name,
+                lookup_key=_normalize_lookup_key(org.name),
+            )
+            for org in orgs
+            if org.id in _allowed_org_ids
+        ]
+        return sorted(entries, key=lambda entry: (entry.lookup_key, entry.id))
+
+    return await _run_tool(_run, tool_name="get_organization_name_index", safe_args={})
+
+
+@mcp.tool()
 async def get_project(organization_id: _AhId, project_id: _AhId) -> Project:
     """Get details for a specific AuditHub project."""
 
@@ -235,6 +266,35 @@ async def get_project(organization_id: _AhId, project_id: _AhId) -> Project:
         _run,
         tool_name="get_project",
         safe_args={"organization_id": organization_id, "project_id": project_id},
+    )
+
+
+@mcp.tool()
+async def get_project_name_index(organization_id: _AhId) -> list[ProjectNameIndexEntry]:
+    """List allowlisted projects in an organization as deterministic name lookup entries."""
+
+    async def _run() -> list[ProjectNameIndexEntry]:
+        _assert_org_allowed(organization_id)
+        projects = await _with_api_client(
+            lambda client: ProjectsApi(client).get_projects_organizations_organization_id_projects_get(  # noqa: E501
+                organization_id=organization_id
+            )
+        )
+        entries = [
+            ProjectNameIndexEntry(
+                id=project.id,
+                name=project.name,
+                lookup_key=_normalize_lookup_key(project.name),
+            )
+            for project in _project_ta.validate_python(projects)
+            if project.id in _allowed_project_ids
+        ]
+        return sorted(entries, key=lambda entry: (entry.lookup_key, entry.id))
+
+    return await _run_tool(
+        _run,
+        tool_name="get_project_name_index",
+        safe_args={"organization_id": organization_id},
     )
 
 
