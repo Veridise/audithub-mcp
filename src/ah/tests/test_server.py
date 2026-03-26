@@ -282,16 +282,38 @@ class TestToolCalls(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.id, 10)
 
     async def test_get_project_name_index_filters_and_sorts(self) -> None:
+        mock = AsyncMock(side_effect=[_PROJECT_DICT_TWO, _PROJECT_DICT])
         with patch.object(
             server.ProjectsApi,
-            "get_projects_organizations_organization_id_projects_get",
-            AsyncMock(return_value=[_PROJECT_DICT_TWO, _PROJECT_DICT, _PROJECT_DICT_THREE]),
+            "get_project_organizations_organization_id_projects_project_id_get",
+            mock,
         ):
             server._allowed_project_ids = frozenset({10, 20})
             result = await server.get_project_name_index(organization_id=1)
         self.assertEqual([item.id for item in result], [10, 20])
         self.assertEqual([item.lookup_key for item in result], ["audit", "zebra"])
         self.assertTrue(all(isinstance(item, ProjectNameIndexEntry) for item in result))
+        self.assertEqual(
+            [call.kwargs for call in mock.await_args_list],
+            [
+                {"organization_id": 1, "project_id": 10},
+                {"organization_id": 1, "project_id": 20},
+            ],
+        )
+
+    async def test_get_project_name_index_skips_404_projects(self) -> None:
+        class _NotFoundError(Exception):
+            status = 404
+
+        mock = AsyncMock(side_effect=[_PROJECT_DICT, _NotFoundError()])
+        with patch.object(
+            server.ProjectsApi,
+            "get_project_organizations_organization_id_projects_project_id_get",
+            mock,
+        ):
+            server._allowed_project_ids = frozenset({10, 20})
+            result = await server.get_project_name_index(organization_id=1)
+        self.assertEqual([item.id for item in result], [10])
 
     async def test_get_latest_version_returns_version(self) -> None:
         with patch.object(
@@ -419,7 +441,7 @@ class TestToolCalls(unittest.IsolatedAsyncioTestCase):
         mock = AsyncMock(return_value=[_PROJECT_DICT])
         with patch.object(
             server.ProjectsApi,
-            "get_projects_organizations_organization_id_projects_get",
+            "get_project_organizations_organization_id_projects_project_id_get",
             mock,
         ), self.assertRaises(RuntimeError):
             await server.get_project_name_index(organization_id=99)

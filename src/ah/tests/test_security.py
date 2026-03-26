@@ -52,7 +52,7 @@ class TestDisallowedIds(unittest.IsolatedAsyncioTestCase):
         mock = AsyncMock(return_value=[{"id": 10, "name": "Audit"}])
         with patch.object(
             server.ProjectsApi,
-            "get_projects_organizations_organization_id_projects_get",
+            "get_project_organizations_organization_id_projects_project_id_get",
             mock,
         ), self.assertRaises(RuntimeError):
             await server.get_project_name_index(organization_id=999)

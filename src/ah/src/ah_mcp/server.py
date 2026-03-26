@@ -277,20 +277,32 @@ async def get_project_name_index(organization_id: _AhId) -> list[ProjectNameInde
 
     async def _run() -> list[ProjectNameIndexEntry]:
         _assert_org_allowed(organization_id)
-        projects = await _with_api_client(
-            lambda client: ProjectsApi(client).get_projects_organizations_organization_id_projects_get(  # noqa: E501
-                organization_id=organization_id
+
+        async def _fetch_project(project_id: int) -> Project:
+            project = await _with_api_client(
+                lambda client: ProjectsApi(client).get_project_organizations_organization_id_projects_project_id_get(  # noqa: E501
+                    organization_id=organization_id,
+                    project_id=project_id,
+                )
             )
-        )
-        entries = [
-            ProjectNameIndexEntry(
-                id=project.id,
-                name=project.name,
-                lookup_key=_normalize_lookup_key(project.name),
+            return Project.model_validate(project)
+
+        entries: list[ProjectNameIndexEntry] = []
+        for project_id in sorted(_allowed_project_ids):
+            try:
+                validated_project = await _fetch_project(project_id)
+            except Exception as exc:
+                status = getattr(exc, "status", None)
+                if isinstance(status, int) and status == 404:
+                    continue
+                raise
+            entries.append(
+                ProjectNameIndexEntry(
+                    id=validated_project.id,
+                    name=validated_project.name,
+                    lookup_key=_normalize_lookup_key(validated_project.name),
+                )
             )
-            for project in _project_ta.validate_python(projects)
-            if project.id in _allowed_project_ids
-        ]
         return sorted(entries, key=lambda entry: (entry.lookup_key, entry.id))
 
     return await _run_tool(
