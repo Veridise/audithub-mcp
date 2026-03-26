@@ -30,6 +30,16 @@ class ProjectNameIndexEntry(BaseModel):
     name: str
     lookup_key: str
 
+
+class VersionNameIndexEntry(BaseModel):
+    """Name lookup entry for an allowlisted AuditHub version."""
+
+    model_config = ConfigDict(frozen=True)
+
+    id: int
+    name: str
+    lookup_key: str
+
 __all__ = [
     "Comment",
     "IssueDetails",
@@ -41,4 +51,5 @@ __all__ = [
     "Task",
     "Thread",
     "Version",
+    "VersionNameIndexEntry",
 ]

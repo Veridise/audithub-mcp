@@ -152,6 +152,11 @@ class ProjectsApi(_ApiBase):
 
 
 class VersionsApi(_ApiBase):
+    async def get_versions_organizations_organization_id_projects_project_id_versions_get(
+        self, **kwargs
+    ):
+        raise NotImplementedError
+
     async def get_latest_version_organizations_organization_id_projects_project_id_versions_latest_get(  # noqa: E501
         self, **kwargs
     ):

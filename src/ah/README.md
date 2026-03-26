@@ -77,6 +77,7 @@ Replace `/absolute/path/to/ah.env` with the actual path to your `.env` file. You
 | `get_project` | Get details for a specific project |
 | `get_project_name_index` | List allowlisted projects in an organization as deterministic name-to-ID lookup entries |
 | `get_latest_version` | Get the latest version of a project |
+| `get_version_name_index` | List project versions as deterministic name-to-ID lookup entries |
 | `get_task_info` | Get status and details for an AuditHub task |
 | `get_task_logs` | Get logs for a specific step of a task |
 | `get_version_comments` | Get comments for a specific project version |
@@ -88,8 +89,9 @@ Replace `/absolute/path/to/ah.env` with the actual path to your `.env` file. You
 All tools return typed Python objects backed by `audithub-sdk` models. On error, tools raise `RuntimeError` with a sanitized plain-text message; the MCP protocol surfaces this as an error response to the caller.
 
 The name index tools only expose organizations and projects that already pass the configured
-allowlists. They are intended to help callers resolve stable human-readable names to internal
-AuditHub IDs before invoking the existing ID-based tools.
+allowlists. Version name lookup requires an allowlisted organization and project. These tools help
+callers resolve stable human-readable names to internal AuditHub IDs before invoking the existing
+ID-based tools.
 
 ## Security model
 

@@ -40,6 +40,7 @@ from ah_mcp.models import (
     Task,
     Thread,
     Version,
+    VersionNameIndexEntry,
 )
 
 _AhId = Annotated[int, Field(strict=True, gt=0)]
@@ -71,6 +72,7 @@ _comment_ta = TypeAdapter(list[Comment])
 _thread_ta = TypeAdapter(list[Thread])
 _issue_list_ta = TypeAdapter(list[IssueForList])
 _project_ta = TypeAdapter(list[Project])
+_version_ta = TypeAdapter(list[Version])
 _str_list_ta = TypeAdapter(list[str])
 
 
@@ -316,6 +318,38 @@ async def get_latest_version(organization_id: _AhId, project_id: _AhId) -> Versi
     return await _run_tool(
         _run,
         tool_name="get_latest_version",
+        safe_args={"organization_id": organization_id, "project_id": project_id},
+    )
+
+
+@mcp.tool()
+async def get_version_name_index(
+    organization_id: _AhId, project_id: _AhId
+) -> list[VersionNameIndexEntry]:
+    """List project versions as deterministic name lookup entries."""
+
+    async def _run() -> list[VersionNameIndexEntry]:
+        _assert_org_allowed(organization_id)
+        _assert_project_allowed(project_id)
+        versions = await _with_api_client(
+            lambda client: VersionsApi(client).get_versions_organizations_organization_id_projects_project_id_versions_get(  # noqa: E501
+                organization_id=organization_id,
+                project_id=project_id,
+            )
+        )
+        entries = [
+            VersionNameIndexEntry(
+                id=version.id,
+                name=version.name,
+                lookup_key=_normalize_lookup_key(version.name),
+            )
+            for version in _version_ta.validate_python(versions)
+        ]
+        return sorted(entries, key=lambda entry: (entry.lookup_key, entry.id))
+
+    return await _run_tool(
+        _run,
+        tool_name="get_version_name_index",
         safe_args={"organization_id": organization_id, "project_id": project_id},
     )
 

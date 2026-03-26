@@ -22,6 +22,7 @@ from ah_mcp.models import (  # noqa: E402
     Task,
     Thread,
     Version,
+    VersionNameIndexEntry,
 )
 
 _TIMESTAMP = "2026-03-26T12:00:00Z"
@@ -62,6 +63,16 @@ _VERSION_DICT = {
     "digest": "digest-42",
     "commit_hash": "abc123",
     "is_deployed": False,
+}
+_VERSION_DICT_TWO = {
+    **_VERSION_DICT,
+    "id": 43,
+    "name": " Release Candidate ",
+}
+_VERSION_DICT_THREE = {
+    **_VERSION_DICT,
+    "id": 44,
+    "name": "alpha",
 }
 _TASK_DICT = {
     "id": 99,
@@ -291,6 +302,20 @@ class TestToolCalls(unittest.IsolatedAsyncioTestCase):
             result = await server.get_latest_version(organization_id=1, project_id=10)
         self.assertIsInstance(result, Version)
 
+    async def test_get_version_name_index_filters_and_sorts(self) -> None:
+        with patch.object(
+            server.VersionsApi,
+            "get_versions_organizations_organization_id_projects_project_id_versions_get",
+            AsyncMock(return_value=[_VERSION_DICT_TWO, _VERSION_DICT, _VERSION_DICT_THREE]),
+        ):
+            result = await server.get_version_name_index(organization_id=1, project_id=10)
+        self.assertEqual([item.id for item in result], [44, 43, 42])
+        self.assertEqual(
+            [item.lookup_key for item in result],
+            ["alpha", "release candidate", "v1.0"],
+        )
+        self.assertTrue(all(isinstance(item, VersionNameIndexEntry) for item in result))
+
     async def test_get_task_info_returns_task(self) -> None:
         with patch.object(
             server.TasksApi,
@@ -398,6 +423,16 @@ class TestToolCalls(unittest.IsolatedAsyncioTestCase):
             mock,
         ), self.assertRaises(RuntimeError):
             await server.get_project_name_index(organization_id=99)
+        mock.assert_not_awaited()
+
+    async def test_get_version_name_index_rejection_prevents_sdk_call(self) -> None:
+        mock = AsyncMock(return_value=[_VERSION_DICT])
+        with patch.object(
+            server.VersionsApi,
+            "get_versions_organizations_organization_id_projects_project_id_versions_get",
+            mock,
+        ), self.assertRaises(RuntimeError):
+            await server.get_version_name_index(organization_id=1, project_id=99)
         mock.assert_not_awaited()
 
     async def test_non_runtime_error_is_sanitized(self) -> None:

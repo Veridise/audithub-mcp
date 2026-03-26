@@ -25,6 +25,7 @@ from ah_mcp.models import (  # noqa: E402
     Project,
     Thread,
     Version,
+    VersionNameIndexEntry,
 )
 
 pytestmark = pytest.mark.integration
@@ -65,6 +66,12 @@ def test_get_latest_version() -> None:
     version = _run(server.get_latest_version(organization_id=_ORG_ID, project_id=_PROJECT_ID))
     assert isinstance(version, Version)
     assert version.id > 0
+
+
+def test_list_version_name_index() -> None:
+    entries = _run(server.get_version_name_index(organization_id=_ORG_ID, project_id=_PROJECT_ID))
+    assert isinstance(entries, list)
+    assert all(isinstance(entry, VersionNameIndexEntry) for entry in entries)
 
 
 def test_list_issues() -> None:
