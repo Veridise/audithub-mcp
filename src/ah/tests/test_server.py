@@ -22,14 +22,97 @@ from ah_mcp.models import (  # noqa: E402
     Version,
 )
 
-_ORG_DICT = {"id": 1, "name": "Acme", "gh_connected": True}
-_PROJECT_DICT = {"id": 10, "name": "Audit"}
-_VERSION_DICT = {"id": 42, "name": "v1.0"}
-_TASK_DICT = {"id": 99, "status": "Finished"}
-_COMMENT_DICT = {"id": 5, "project_id": 10, "thread_id": 3}
-_THREAD_DICT = {"id": 3, "project_id": 10, "type": "note", "subject": {"type": "project"}}
-_ISSUE_LIST_DICT = {"id": 7, "title": "Bug"}
-_ISSUE_DETAILS_DICT = {"kind": "public", "data": {"id": 7}}
+_TIMESTAMP = "2026-03-26T12:00:00Z"
+_INPUT_INFO_DICT = {"input_type": "archive", "url": "https://example.com/archive.zip"}
+_SOURCE_REFERENCE_DICT = {"version_id": 42, "relative_path": "contracts/Audit.sol"}
+_ORG_DICT = {
+    "id": 1,
+    "name": "Acme",
+    "gh_connected": True,
+    "created_at": _TIMESTAMP,
+}
+_PROJECT_DICT = {
+    "id": 10,
+    "name": "Audit",
+    "project_root": ".",
+    "src_path": "contracts",
+    "input_info": _INPUT_INFO_DICT,
+    "created_at": _TIMESTAMP,
+    "gh_repo": "acme/audit",
+    "is_deployed": False,
+}
+_VERSION_DICT = {
+    "id": 42,
+    "name": "v1.0",
+    "created_at": _TIMESTAMP,
+    "input_info": _INPUT_INFO_DICT,
+    "project_revision_hash": "rev-42",
+    "digest": "digest-42",
+    "commit_hash": "abc123",
+    "is_deployed": False,
+}
+_TASK_DICT = {
+    "id": 99,
+    "tool_name": "analysis",
+    "tool_version": "1.0.0",
+    "version_id": 42,
+    "status": "Finished",
+    "created_at": _TIMESTAMP,
+}
+_COMMENT_DICT = {
+    "id": 5,
+    "project_id": 10,
+    "version_id": 42,
+    "thread_id": 3,
+    "data": "comment body",
+    "created_at": _TIMESTAMP,
+    "created_by": "auditor@example.com",
+    "system_generated": False,
+    "is_modified": False,
+    "is_deleted": False,
+}
+_THREAD_DICT = {
+    "id": 3,
+    "project_id": 10,
+    "version_id": 42,
+    "type": "note",
+    "subject": {"type": "project"},
+    "title": "Review note",
+    "created_at": _TIMESTAMP,
+    "created_by": "auditor@example.com",
+    "commenter_ids": ["auditor@example.com"],
+    "resolved": False,
+}
+_ISSUE_LIST_DICT = {
+    "id": 7,
+    "created_at": _TIMESTAMP,
+    "last_updated_at": _TIMESTAMP,
+    "gh_issue_url": None,
+    "gh_security_advisory_url": None,
+    "externally_shared": False,
+    "status": "open",
+    "title": "Bug",
+    "likelihood": 1,
+    "impact": 1,
+    "severity": 1,
+}
+_ISSUE_DETAILS_DICT = {
+    "kind": "public",
+    "data": {
+        "id": 7,
+        "gh_issue_url": None,
+        "gh_security_advisory_url": None,
+        "status": "open",
+        "revision_id": 1,
+        "description": "Issue description",
+        "affected_files": [_SOURCE_REFERENCE_DICT],
+        "type": [1],
+        "title": "Bug",
+        "likelihood": 1,
+        "impact": 1,
+        "severity": 1,
+    },
+}
 
 _FULL_ENV: dict[str, str] = {
     "AUDITHUB_BASE_URL": "https://example.com/api/v1",

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sys
 import types
+from datetime import datetime
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict
@@ -14,42 +15,82 @@ class _BaseSdkModel(BaseModel):
 
 
 class Organization(_BaseSdkModel):
+    created_at: datetime
     id: int
     name: str
     gh_connected: bool
 
 
 class Project(_BaseSdkModel):
+    project_root: str
+    src_path: str
+    input_info: dict[str, Any]
     id: int
     name: str
+    created_at: datetime
+    gh_repo: str | None = None
+    is_deployed: bool
 
 
 class Version(_BaseSdkModel):
     id: int
     name: str
+    created_at: datetime
+    input_info: dict[str, Any]
+    project_revision_hash: str
+    digest: str | None = None
+    commit_hash: str | None = None
+    is_deployed: bool
 
 
 class Task(_BaseSdkModel):
     id: int
+    tool_name: str
+    tool_version: str
+    version_id: int
     status: str
+    created_at: datetime
 
 
 class Comment(_BaseSdkModel):
-    id: int
     project_id: int
+    version_id: int | None = None
     thread_id: int
+    data: str | None
+    id: int
+    created_at: datetime
+    created_by: str
+    system_generated: bool | None = None
+    is_modified: bool
+    is_deleted: bool
 
 
 class Thread(_BaseSdkModel):
-    id: int
     project_id: int
+    version_id: int | None = None
     type: str
+    id: int
     subject: dict[str, Any]
+    created_at: datetime
+    created_by: str
+    commenter_ids: list[str] | None = None
+    resolved: bool | None = False
+    resolved_at: datetime | None = None
+    resolved_by: str | None = None
 
 
 class IssueForList(_BaseSdkModel):
+    created_at: datetime
+    last_updated_at: datetime
     id: int
+    gh_issue_url: str | None = None
+    gh_security_advisory_url: str | None = None
+    externally_shared: bool
+    status: str
     title: str
+    likelihood: int
+    impact: int
+    severity: int
 
 
 class IssueDetails(_BaseSdkModel):
