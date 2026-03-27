@@ -417,7 +417,11 @@ async def get_version_comments(
     limit: Annotated[int, Field(ge=0)] | None = 200,
     offset: Annotated[int, Field(ge=0)] | None = 0,
 ) -> list[Comment]:
-    """Get comments for a specific project version."""
+    """Get comments for a specific project version. Use this only to aggregate comments 
+       at the version level, if you are looking for a specific thread id use 
+       get_thread_comments instead.
+
+       This can return large objects, prefer pagination to avoid truncation by MCP."""
 
     async def _run() -> list[Comment]:
         _build_pagination_params(limit, offset)
@@ -477,6 +481,48 @@ async def get_version_comment_threads(
             "organization_id": organization_id,
             "project_id": project_id,
             "version_id": version_id,
+            "limit": limit,
+            "offset": offset,
+        },
+    )
+
+
+@mcp.tool()
+async def get_thread_comments(
+    organization_id: _AhId,
+    project_id: _AhId,
+    version_id: _AhId,
+    thread_id: _AhId,
+    limit: Annotated[int, Field(ge=0)] | None = 200,
+    offset: Annotated[int, Field(ge=0)] | None = 0,
+) -> list[Comment]:
+    """Get comments for a specific thread within a project version.
+       This can return large objects, prefer pagination to avoid truncation by MCP."""
+
+    async def _run() -> list[Comment]:
+        _build_pagination_params(limit, offset)
+        _assert_org_allowed(organization_id)
+        _assert_project_allowed(project_id)
+        comments = await _with_api_client(
+            lambda client: VersionsApi(client).get_version_comments_organizations_organization_id_projects_project_id_versions_version_id_comments_get(  # noqa: E501
+                organization_id=organization_id,
+                project_id=project_id,
+                version_id=version_id,
+                thread_id=thread_id,
+                limit=limit,
+                offset=offset,
+            )
+        )
+        return _comment_ta.validate_python(comments)
+
+    return await _run_tool(
+        _run,
+        tool_name="get_thread_comments",
+        safe_args={
+            "organization_id": organization_id,
+            "project_id": project_id,
+            "version_id": version_id,
+            "thread_id": thread_id,
             "limit": limit,
             "offset": offset,
         },
@@ -552,7 +598,11 @@ async def get_project_comments(
     limit: Annotated[int, Field(ge=0)] | None = 200,
     offset: Annotated[int, Field(ge=0)] | None = 0,
 ) -> list[Comment]:
-    """Get all comments for an AuditHub project across all versions."""
+    """Get all comments for an AuditHub project across all versions. Use this only to
+       aggregate comments at the project level, if you are looking for a specific thread
+       id use get_thread_comments instead.
+       
+       This can return large objects, prefer pagination to avoid truncation by MCP."""
 
     async def _run() -> list[Comment]:
         _build_pagination_params(limit, offset)

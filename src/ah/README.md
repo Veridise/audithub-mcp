@@ -82,6 +82,7 @@ Replace `/absolute/path/to/ah.env` with the actual path to your `.env` file. You
 | `get_task_logs` | Get logs for a specific step of a task |
 | `get_version_comments` | Get comments for a specific project version |
 | `get_version_comment_threads` | Get comment threads for a specific project version |
+| `get_thread_comments` | Get comments for a specific thread within a project version |
 | `get_project_issues` | Get all issues for a project |
 | `get_project_issue` | Get a specific issue from a project |
 | `get_project_comments` | Get all comments for a project across all versions |

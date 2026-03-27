@@ -371,6 +371,27 @@ class TestToolCalls(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(kwargs["offset"], 25)
         self.assertIsInstance(result[0], Comment)
 
+    async def test_get_thread_comments_forwards_thread_limit_offset(self) -> None:
+        mock = AsyncMock(return_value=[_COMMENT_DICT])
+        with patch.object(
+            server.VersionsApi,
+            "get_version_comments_organizations_organization_id_projects_project_id_versions_version_id_comments_get",  # noqa: E501
+            mock,
+        ):
+            result = await server.get_thread_comments(
+                organization_id=1,
+                project_id=10,
+                version_id=3,
+                thread_id=7,
+                limit=75,
+                offset=25,
+            )
+        kwargs = mock.await_args.kwargs
+        self.assertEqual(kwargs["thread_id"], 7)
+        self.assertEqual(kwargs["limit"], 75)
+        self.assertEqual(kwargs["offset"], 25)
+        self.assertIsInstance(result[0], Comment)
+
     async def test_get_version_comment_threads_slices_client_side(self) -> None:
         mock = AsyncMock(
             return_value=[
@@ -457,6 +478,18 @@ class TestToolCalls(unittest.IsolatedAsyncioTestCase):
             await server.get_version_name_index(organization_id=1, project_id=99)
         mock.assert_not_awaited()
 
+    async def test_get_thread_comments_rejection_prevents_sdk_call(self) -> None:
+        mock = AsyncMock(return_value=[_COMMENT_DICT])
+        with patch.object(
+            server.VersionsApi,
+            "get_version_comments_organizations_organization_id_projects_project_id_versions_version_id_comments_get",  # noqa: E501
+            mock,
+        ), self.assertRaises(RuntimeError):
+            await server.get_thread_comments(
+                organization_id=99, project_id=10, version_id=3, thread_id=7
+            )
+        mock.assert_not_awaited()
+
     async def test_non_runtime_error_is_sanitized(self) -> None:
         with patch.object(
             server.UsersApi,
@@ -488,6 +521,21 @@ class TestFastMCPSchemaValidation(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises((McpError, Exception)) as cm:
             await server.mcp._tool_manager.call_tool(
                 "get_project", {"organization_id": "1", "project_id": 10}
+            )
+        self.assertIn("validation error", str(cm.exception).lower())
+
+    async def test_string_thread_id_rejected(self) -> None:
+        from mcp.shared.exceptions import McpError
+
+        with self.assertRaises((McpError, Exception)) as cm:
+            await server.mcp._tool_manager.call_tool(
+                "get_thread_comments",
+                {
+                    "organization_id": 1,
+                    "project_id": 10,
+                    "version_id": 42,
+                    "thread_id": "3",
+                },
             )
         self.assertIn("validation error", str(cm.exception).lower())
 

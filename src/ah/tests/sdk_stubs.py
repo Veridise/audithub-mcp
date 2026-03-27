@@ -163,7 +163,14 @@ class VersionsApi(_ApiBase):
         raise NotImplementedError
 
     async def get_version_comments_organizations_organization_id_projects_project_id_versions_version_id_comments_get(  # noqa: E501
-        self, **kwargs
+        self,
+        *,
+        organization_id: int,
+        project_id: int,
+        version_id: int,
+        limit: int | None = None,
+        offset: int | None = None,
+        thread_id: int | None = None,
     ):
         raise NotImplementedError
 
