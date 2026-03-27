@@ -52,6 +52,14 @@ class Task(_BaseSdkModel):
     created_at: datetime
 
 
+class FIOData(_BaseSdkModel):
+    state_digest: int
+    analysis_result_id: str
+    is_filtered: bool
+    data: dict[str, Any] | None = None
+    actions: list[dict[str, Any]] | None = None
+
+
 class Comment(_BaseSdkModel):
     project_id: int
     version_id: int | None = None
@@ -196,6 +204,11 @@ class TasksApi(_ApiBase):
     async def get_info_organizations_organization_id_tasks_task_id_get(self, **kwargs):
         raise NotImplementedError
 
+    async def get_task_findings_organizations_organization_id_tasks_task_id_findings_get(
+        self, **kwargs
+    ):
+        raise NotImplementedError
+
     async def get_output_organizations_organization_id_tasks_task_id_step_code_output_get(
         self, **kwargs
     ):
@@ -231,6 +244,7 @@ def install_sdk_stubs() -> None:
         ("project", Project),
         ("version", Version),
         ("task", Task),
+        ("fio_data", FIOData),
         ("comment", Comment),
         ("thread", Thread),
         ("issue_for_list", IssueForList),
