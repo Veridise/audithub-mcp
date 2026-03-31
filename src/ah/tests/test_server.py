@@ -13,6 +13,7 @@ install_sdk_stubs()
 import ah_mcp.server as server  # noqa: E402
 from ah_mcp.models import (  # noqa: E402
     Comment,
+    FIOData,
     IssueDetails,
     IssueForList,
     Organization,
@@ -81,6 +82,13 @@ _TASK_DICT = {
     "version_id": 42,
     "status": "Finished",
     "created_at": _TIMESTAMP,
+}
+_FINDING_DICT = {
+    "state_digest": 123,
+    "analysis_result_id": "analysis-1",
+    "is_filtered": False,
+    "data": {"title": "Unchecked call return value"},
+    "actions": [],
 }
 _COMMENT_DICT = {
     "id": 5,
@@ -356,6 +364,16 @@ class TestToolCalls(unittest.IsolatedAsyncioTestCase):
             result = await server.get_task_logs(organization_id=1, task_id=99, step_code="analysis")
         self.assertEqual(result, ["a", "b"])
 
+    async def test_get_task_findings_returns_list(self) -> None:
+        with patch.object(
+            server.TasksApi,
+            "get_task_findings_organizations_organization_id_tasks_task_id_findings_get",
+            AsyncMock(return_value=[_FINDING_DICT]),
+        ):
+            result = await server.get_task_findings(organization_id=1, task_id=99)
+        self.assertEqual(result[0].analysis_result_id, "analysis-1")
+        self.assertIsInstance(result[0], FIOData)
+
     async def test_get_version_comments_forwards_limit_offset(self) -> None:
         mock = AsyncMock(return_value=[_COMMENT_DICT])
         with patch.object(
@@ -367,6 +385,27 @@ class TestToolCalls(unittest.IsolatedAsyncioTestCase):
                 organization_id=1, project_id=10, version_id=3, limit=75, offset=25
             )
         kwargs = mock.await_args.kwargs
+        self.assertEqual(kwargs["limit"], 75)
+        self.assertEqual(kwargs["offset"], 25)
+        self.assertIsInstance(result[0], Comment)
+
+    async def test_get_thread_comments_forwards_thread_limit_offset(self) -> None:
+        mock = AsyncMock(return_value=[_COMMENT_DICT])
+        with patch.object(
+            server.VersionsApi,
+            "get_version_comments_organizations_organization_id_projects_project_id_versions_version_id_comments_get",  # noqa: E501
+            mock,
+        ):
+            result = await server.get_thread_comments(
+                organization_id=1,
+                project_id=10,
+                version_id=3,
+                thread_id=7,
+                limit=75,
+                offset=25,
+            )
+        kwargs = mock.await_args.kwargs
+        self.assertEqual(kwargs["thread_id"], 7)
         self.assertEqual(kwargs["limit"], 75)
         self.assertEqual(kwargs["offset"], 25)
         self.assertIsInstance(result[0], Comment)
@@ -457,6 +496,18 @@ class TestToolCalls(unittest.IsolatedAsyncioTestCase):
             await server.get_version_name_index(organization_id=1, project_id=99)
         mock.assert_not_awaited()
 
+    async def test_get_thread_comments_rejection_prevents_sdk_call(self) -> None:
+        mock = AsyncMock(return_value=[_COMMENT_DICT])
+        with patch.object(
+            server.VersionsApi,
+            "get_version_comments_organizations_organization_id_projects_project_id_versions_version_id_comments_get",  # noqa: E501
+            mock,
+        ), self.assertRaises(RuntimeError):
+            await server.get_thread_comments(
+                organization_id=99, project_id=10, version_id=3, thread_id=7
+            )
+        mock.assert_not_awaited()
+
     async def test_non_runtime_error_is_sanitized(self) -> None:
         with patch.object(
             server.UsersApi,
@@ -488,6 +539,21 @@ class TestFastMCPSchemaValidation(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises((McpError, Exception)) as cm:
             await server.mcp._tool_manager.call_tool(
                 "get_project", {"organization_id": "1", "project_id": 10}
+            )
+        self.assertIn("validation error", str(cm.exception).lower())
+
+    async def test_string_thread_id_rejected(self) -> None:
+        from mcp.shared.exceptions import McpError
+
+        with self.assertRaises((McpError, Exception)) as cm:
+            await server.mcp._tool_manager.call_tool(
+                "get_thread_comments",
+                {
+                    "organization_id": 1,
+                    "project_id": 10,
+                    "version_id": 42,
+                    "thread_id": "3",
+                },
             )
         self.assertIn("validation error", str(cm.exception).lower())
 

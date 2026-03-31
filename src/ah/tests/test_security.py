@@ -42,6 +42,22 @@ class TestDisallowedIds(unittest.IsolatedAsyncioTestCase):
             await server.get_project(organization_id=999, project_id=10)
         mock.assert_not_awaited()
 
+    async def test_task_findings_disallowed_org(self) -> None:
+        with self.assertRaises(RuntimeError) as cm:
+            await server.get_task_findings(organization_id=999, task_id=10)
+        self.assertIn("999", str(cm.exception))
+        self.assertNotIn("frozenset", str(cm.exception))
+
+    async def test_task_findings_rejected_call_does_not_reach_sdk(self) -> None:
+        mock = AsyncMock(return_value=[])
+        with patch.object(
+            server.TasksApi,
+            "get_task_findings_organizations_organization_id_tasks_task_id_findings_get",
+            mock,
+        ), self.assertRaises(RuntimeError):
+            await server.get_task_findings(organization_id=999, task_id=10)
+        mock.assert_not_awaited()
+
     async def test_project_name_index_disallowed_org(self) -> None:
         with self.assertRaises(RuntimeError) as cm:
             await server.get_project_name_index(organization_id=999)
