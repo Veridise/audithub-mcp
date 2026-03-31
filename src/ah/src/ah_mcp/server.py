@@ -31,6 +31,7 @@ from pydantic import Field, TypeAdapter
 from ah_mcp.audit import log_call_error, log_call_start, log_call_success
 from ah_mcp.models import (
     Comment,
+    FIOData,
     IssueDetails,
     IssueForList,
     Organization,
@@ -69,6 +70,7 @@ _allowed_project_ids: frozenset[int] = frozenset()
 
 _org_ta = TypeAdapter(list[Organization])
 _comment_ta = TypeAdapter(list[Comment])
+_fio_data_ta = TypeAdapter(list[FIOData])
 _thread_ta = TypeAdapter(list[Thread])
 _issue_list_ta = TypeAdapter(list[IssueForList])
 _project_ta = TypeAdapter(list[Project])
@@ -405,6 +407,27 @@ async def get_task_logs(organization_id: _AhId, task_id: _AhId, step_code: str) 
     return await _run_tool(
         _run,
         tool_name="get_task_logs",
+        safe_args={"organization_id": organization_id, "task_id": task_id},
+    )
+
+
+@mcp.tool()
+async def get_task_findings(organization_id: _AhId, task_id: _AhId) -> list[FIOData]:
+    """Get findings produced by an AuditHub task execution."""
+
+    async def _run() -> list[FIOData]:
+        _assert_org_allowed(organization_id)
+        findings = await _with_api_client(
+            lambda client: TasksApi(client).get_task_findings_organizations_organization_id_tasks_task_id_findings_get(  # noqa: E501
+                organization_id=organization_id,
+                task_id=task_id,
+            )
+        )
+        return _fio_data_ta.validate_python(findings)
+
+    return await _run_tool(
+        _run,
+        tool_name="get_task_findings",
         safe_args={"organization_id": organization_id, "task_id": task_id},
     )
 

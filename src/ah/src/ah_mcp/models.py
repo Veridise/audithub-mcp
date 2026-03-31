@@ -1,6 +1,7 @@
 """SDK-backed AuditHub models and MCP-specific response types."""
 
 from audithub_sdk.models.comment import Comment
+from audithub_sdk.models.fio_data import FIOData
 from audithub_sdk.models.issue_details import IssueDetails
 from audithub_sdk.models.issue_for_list import IssueForList
 from audithub_sdk.models.organization import Organization
@@ -42,6 +43,7 @@ class VersionNameIndexEntry(BaseModel):
 
 __all__ = [
     "Comment",
+    "FIOData",
     "IssueDetails",
     "IssueForList",
     "Organization",

@@ -80,6 +80,7 @@ Replace `/absolute/path/to/ah.env` with the actual path to your `.env` file. You
 | `get_version_name_index` | List project versions as deterministic name-to-ID lookup entries |
 | `get_task_info` | Get status and details for an AuditHub task |
 | `get_task_logs` | Get logs for a specific step of a task |
+| `get_task_findings` | Get findings produced by a task execution |
 | `get_version_comments` | Get comments for a specific project version |
 | `get_version_comment_threads` | Get comment threads for a specific project version |
 | `get_thread_comments` | Get comments for a specific thread within a project version |

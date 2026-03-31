@@ -13,6 +13,7 @@ install_sdk_stubs()
 import ah_mcp.server as server  # noqa: E402
 from ah_mcp.models import (  # noqa: E402
     Comment,
+    FIOData,
     IssueDetails,
     IssueForList,
     Organization,
@@ -81,6 +82,13 @@ _TASK_DICT = {
     "version_id": 42,
     "status": "Finished",
     "created_at": _TIMESTAMP,
+}
+_FINDING_DICT = {
+    "state_digest": 123,
+    "analysis_result_id": "analysis-1",
+    "is_filtered": False,
+    "data": {"title": "Unchecked call return value"},
+    "actions": [],
 }
 _COMMENT_DICT = {
     "id": 5,
@@ -355,6 +363,16 @@ class TestToolCalls(unittest.IsolatedAsyncioTestCase):
         ):
             result = await server.get_task_logs(organization_id=1, task_id=99, step_code="analysis")
         self.assertEqual(result, ["a", "b"])
+
+    async def test_get_task_findings_returns_list(self) -> None:
+        with patch.object(
+            server.TasksApi,
+            "get_task_findings_organizations_organization_id_tasks_task_id_findings_get",
+            AsyncMock(return_value=[_FINDING_DICT]),
+        ):
+            result = await server.get_task_findings(organization_id=1, task_id=99)
+        self.assertEqual(result[0].analysis_result_id, "analysis-1")
+        self.assertIsInstance(result[0], FIOData)
 
     async def test_get_version_comments_forwards_limit_offset(self) -> None:
         mock = AsyncMock(return_value=[_COMMENT_DICT])
