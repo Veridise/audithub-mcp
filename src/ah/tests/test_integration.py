@@ -25,6 +25,7 @@ from ah_mcp.models import (  # noqa: E402
     Project,
     Thread,
     Version,
+    VersionNameIndexEntry,
 )
 
 pytestmark = pytest.mark.integration
@@ -65,6 +66,12 @@ def test_get_latest_version() -> None:
     version = _run(server.get_latest_version(organization_id=_ORG_ID, project_id=_PROJECT_ID))
     assert isinstance(version, Version)
     assert version.id > 0
+
+
+def test_list_version_name_index() -> None:
+    entries = _run(server.get_version_name_index(organization_id=_ORG_ID, project_id=_PROJECT_ID))
+    assert isinstance(entries, list)
+    assert all(isinstance(entry, VersionNameIndexEntry) for entry in entries)
 
 
 def test_list_issues() -> None:
@@ -110,3 +117,27 @@ def test_list_version_threads() -> None:
     )
     assert isinstance(threads, list)
     assert all(isinstance(thread, Thread) for thread in threads)
+
+
+def test_get_thread_comments_if_thread_present() -> None:
+    version = _run(server.get_latest_version(organization_id=_ORG_ID, project_id=_PROJECT_ID))
+    threads = _run(
+        server.get_version_comment_threads(
+            organization_id=_ORG_ID, project_id=_PROJECT_ID, version_id=version.id, limit=10
+        )
+    )
+    if not threads:
+        pytest.skip("No threads found in version — cannot test get_thread_comments")
+
+    comments = _run(
+        server.get_thread_comments(
+            organization_id=_ORG_ID,
+            project_id=_PROJECT_ID,
+            version_id=version.id,
+            thread_id=threads[0].id,
+            limit=10,
+        )
+    )
+    assert isinstance(comments, list)
+    assert all(isinstance(comment, Comment) for comment in comments)
+    assert all(comment.thread_id == threads[0].id for comment in comments)

@@ -31,13 +31,17 @@ from pydantic import Field, TypeAdapter
 from ah_mcp.audit import log_call_error, log_call_start, log_call_success
 from ah_mcp.models import (
     Comment,
+    FIOData,
     IssueDetails,
     IssueForList,
     Organization,
+    OrganizationNameIndexEntry,
     Project,
+    ProjectNameIndexEntry,
     Task,
     Thread,
     Version,
+    VersionNameIndexEntry,
 )
 
 _AhId = Annotated[int, Field(strict=True, gt=0)]
@@ -66,8 +70,11 @@ _allowed_project_ids: frozenset[int] = frozenset()
 
 _org_ta = TypeAdapter(list[Organization])
 _comment_ta = TypeAdapter(list[Comment])
+_fio_data_ta = TypeAdapter(list[FIOData])
 _thread_ta = TypeAdapter(list[Thread])
 _issue_list_ta = TypeAdapter(list[IssueForList])
+_project_ta = TypeAdapter(list[Project])
+_version_ta = TypeAdapter(list[Version])
 _str_list_ta = TypeAdapter(list[str])
 
 
@@ -149,6 +156,11 @@ def _slice_paginated[T](items: Sequence[T], limit: int | None, offset: int | Non
     return list(items[start:end])
 
 
+def _normalize_lookup_key(name: str) -> str:
+    """Normalize a user-visible name into a deterministic case-insensitive lookup key."""
+    return name.strip().casefold()
+
+
 async def _with_api_client[T](fn: Callable[[AuthenticatedApiClient], Awaitable[T]]) -> T:
     """Create an authenticated SDK client for a single tool invocation."""
     ctx = _ctx()
@@ -217,6 +229,29 @@ async def get_my_organizations() -> list[Organization]:
 
 
 @mcp.tool()
+async def get_organization_name_index() -> list[OrganizationNameIndexEntry]:
+    """List allowlisted AuditHub organizations as deterministic name lookup entries."""
+
+    async def _run() -> list[OrganizationNameIndexEntry]:
+        organizations = await _with_api_client(
+            lambda client: UsersApi(client).get_organizations_users_myorganizations_get()
+        )
+        orgs = _org_ta.validate_python(organizations)
+        entries = [
+            OrganizationNameIndexEntry(
+                id=org.id,
+                name=org.name,
+                lookup_key=_normalize_lookup_key(org.name),
+            )
+            for org in orgs
+            if org.id in _allowed_org_ids
+        ]
+        return sorted(entries, key=lambda entry: (entry.lookup_key, entry.id))
+
+    return await _run_tool(_run, tool_name="get_organization_name_index", safe_args={})
+
+
+@mcp.tool()
 async def get_project(organization_id: _AhId, project_id: _AhId) -> Project:
     """Get details for a specific AuditHub project."""
 
@@ -239,6 +274,47 @@ async def get_project(organization_id: _AhId, project_id: _AhId) -> Project:
 
 
 @mcp.tool()
+async def get_project_name_index(organization_id: _AhId) -> list[ProjectNameIndexEntry]:
+    """List allowlisted projects in an organization as deterministic name lookup entries."""
+
+    async def _run() -> list[ProjectNameIndexEntry]:
+        _assert_org_allowed(organization_id)
+
+        async def _fetch_project(project_id: int) -> Project:
+            project = await _with_api_client(
+                lambda client: ProjectsApi(client).get_project_organizations_organization_id_projects_project_id_get(  # noqa: E501
+                    organization_id=organization_id,
+                    project_id=project_id,
+                )
+            )
+            return Project.model_validate(project)
+
+        entries: list[ProjectNameIndexEntry] = []
+        for project_id in sorted(_allowed_project_ids):
+            try:
+                validated_project = await _fetch_project(project_id)
+            except Exception as exc:
+                status = getattr(exc, "status", None)
+                if isinstance(status, int) and status == 404:
+                    continue
+                raise
+            entries.append(
+                ProjectNameIndexEntry(
+                    id=validated_project.id,
+                    name=validated_project.name,
+                    lookup_key=_normalize_lookup_key(validated_project.name),
+                )
+            )
+        return sorted(entries, key=lambda entry: (entry.lookup_key, entry.id))
+
+    return await _run_tool(
+        _run,
+        tool_name="get_project_name_index",
+        safe_args={"organization_id": organization_id},
+    )
+
+
+@mcp.tool()
 async def get_latest_version(organization_id: _AhId, project_id: _AhId) -> Version:
     """Get the latest version of an AuditHub project."""
 
@@ -256,6 +332,38 @@ async def get_latest_version(organization_id: _AhId, project_id: _AhId) -> Versi
     return await _run_tool(
         _run,
         tool_name="get_latest_version",
+        safe_args={"organization_id": organization_id, "project_id": project_id},
+    )
+
+
+@mcp.tool()
+async def get_version_name_index(
+    organization_id: _AhId, project_id: _AhId
+) -> list[VersionNameIndexEntry]:
+    """List project versions as deterministic name lookup entries."""
+
+    async def _run() -> list[VersionNameIndexEntry]:
+        _assert_org_allowed(organization_id)
+        _assert_project_allowed(project_id)
+        versions = await _with_api_client(
+            lambda client: VersionsApi(client).get_versions_organizations_organization_id_projects_project_id_versions_get(  # noqa: E501
+                organization_id=organization_id,
+                project_id=project_id,
+            )
+        )
+        entries = [
+            VersionNameIndexEntry(
+                id=version.id,
+                name=version.name,
+                lookup_key=_normalize_lookup_key(version.name),
+            )
+            for version in _version_ta.validate_python(versions)
+        ]
+        return sorted(entries, key=lambda entry: (entry.lookup_key, entry.id))
+
+    return await _run_tool(
+        _run,
+        tool_name="get_version_name_index",
         safe_args={"organization_id": organization_id, "project_id": project_id},
     )
 
@@ -304,6 +412,27 @@ async def get_task_logs(organization_id: _AhId, task_id: _AhId, step_code: str) 
 
 
 @mcp.tool()
+async def get_task_findings(organization_id: _AhId, task_id: _AhId) -> list[FIOData]:
+    """Get findings produced by an AuditHub task execution."""
+
+    async def _run() -> list[FIOData]:
+        _assert_org_allowed(organization_id)
+        findings = await _with_api_client(
+            lambda client: TasksApi(client).get_task_findings_organizations_organization_id_tasks_task_id_findings_get(  # noqa: E501
+                organization_id=organization_id,
+                task_id=task_id,
+            )
+        )
+        return _fio_data_ta.validate_python(findings)
+
+    return await _run_tool(
+        _run,
+        tool_name="get_task_findings",
+        safe_args={"organization_id": organization_id, "task_id": task_id},
+    )
+
+
+@mcp.tool()
 async def get_version_comments(
     organization_id: _AhId,
     project_id: _AhId,
@@ -311,7 +440,11 @@ async def get_version_comments(
     limit: Annotated[int, Field(ge=0)] | None = 200,
     offset: Annotated[int, Field(ge=0)] | None = 0,
 ) -> list[Comment]:
-    """Get comments for a specific project version."""
+    """Get comments for a specific project version. Use this only to aggregate comments 
+       at the version level, if you are looking for a specific thread id use 
+       get_thread_comments instead.
+
+       This can return large objects, prefer pagination to avoid truncation by MCP."""
 
     async def _run() -> list[Comment]:
         _build_pagination_params(limit, offset)
@@ -371,6 +504,48 @@ async def get_version_comment_threads(
             "organization_id": organization_id,
             "project_id": project_id,
             "version_id": version_id,
+            "limit": limit,
+            "offset": offset,
+        },
+    )
+
+
+@mcp.tool()
+async def get_thread_comments(
+    organization_id: _AhId,
+    project_id: _AhId,
+    version_id: _AhId,
+    thread_id: _AhId,
+    limit: Annotated[int, Field(ge=0)] | None = 200,
+    offset: Annotated[int, Field(ge=0)] | None = 0,
+) -> list[Comment]:
+    """Get comments for a specific thread within a project version.
+       This can return large objects, prefer pagination to avoid truncation by MCP."""
+
+    async def _run() -> list[Comment]:
+        _build_pagination_params(limit, offset)
+        _assert_org_allowed(organization_id)
+        _assert_project_allowed(project_id)
+        comments = await _with_api_client(
+            lambda client: VersionsApi(client).get_version_comments_organizations_organization_id_projects_project_id_versions_version_id_comments_get(  # noqa: E501
+                organization_id=organization_id,
+                project_id=project_id,
+                version_id=version_id,
+                thread_id=thread_id,
+                limit=limit,
+                offset=offset,
+            )
+        )
+        return _comment_ta.validate_python(comments)
+
+    return await _run_tool(
+        _run,
+        tool_name="get_thread_comments",
+        safe_args={
+            "organization_id": organization_id,
+            "project_id": project_id,
+            "version_id": version_id,
+            "thread_id": thread_id,
             "limit": limit,
             "offset": offset,
         },
@@ -446,7 +621,11 @@ async def get_project_comments(
     limit: Annotated[int, Field(ge=0)] | None = 200,
     offset: Annotated[int, Field(ge=0)] | None = 0,
 ) -> list[Comment]:
-    """Get all comments for an AuditHub project across all versions."""
+    """Get all comments for an AuditHub project across all versions. Use this only to
+       aggregate comments at the project level, if you are looking for a specific thread
+       id use get_thread_comments instead.
+       
+       This can return large objects, prefer pagination to avoid truncation by MCP."""
 
     async def _run() -> list[Comment]:
         _build_pagination_params(limit, offset)

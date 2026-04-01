@@ -52,6 +52,14 @@ class Task(_BaseSdkModel):
     created_at: datetime
 
 
+class FIOData(_BaseSdkModel):
+    state_digest: int
+    analysis_result_id: str
+    is_filtered: bool
+    data: dict[str, Any] | None = None
+    actions: list[dict[str, Any]] | None = None
+
+
 class Comment(_BaseSdkModel):
     project_id: int
     version_id: int | None = None
@@ -139,6 +147,9 @@ class UsersApi(_ApiBase):
 
 
 class ProjectsApi(_ApiBase):
+    async def get_projects_organizations_organization_id_projects_get(self, **kwargs):
+        raise NotImplementedError
+
     async def get_project_organizations_organization_id_projects_project_id_get(self, **kwargs):
         raise NotImplementedError
 
@@ -149,13 +160,25 @@ class ProjectsApi(_ApiBase):
 
 
 class VersionsApi(_ApiBase):
+    async def get_versions_organizations_organization_id_projects_project_id_versions_get(
+        self, **kwargs
+    ):
+        raise NotImplementedError
+
     async def get_latest_version_organizations_organization_id_projects_project_id_versions_latest_get(  # noqa: E501
         self, **kwargs
     ):
         raise NotImplementedError
 
     async def get_version_comments_organizations_organization_id_projects_project_id_versions_version_id_comments_get(  # noqa: E501
-        self, **kwargs
+        self,
+        *,
+        organization_id: int,
+        project_id: int,
+        version_id: int,
+        limit: int | None = None,
+        offset: int | None = None,
+        thread_id: int | None = None,
     ):
         raise NotImplementedError
 
@@ -179,6 +202,11 @@ class IssuesApi(_ApiBase):
 
 class TasksApi(_ApiBase):
     async def get_info_organizations_organization_id_tasks_task_id_get(self, **kwargs):
+        raise NotImplementedError
+
+    async def get_task_findings_organizations_organization_id_tasks_task_id_findings_get(
+        self, **kwargs
+    ):
         raise NotImplementedError
 
     async def get_output_organizations_organization_id_tasks_task_id_step_code_output_get(
@@ -216,6 +244,7 @@ def install_sdk_stubs() -> None:
         ("project", Project),
         ("version", Version),
         ("task", Task),
+        ("fio_data", FIOData),
         ("comment", Comment),
         ("thread", Thread),
         ("issue_for_list", IssueForList),

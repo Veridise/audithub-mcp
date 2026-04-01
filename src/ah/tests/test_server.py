@@ -13,13 +13,17 @@ install_sdk_stubs()
 import ah_mcp.server as server  # noqa: E402
 from ah_mcp.models import (  # noqa: E402
     Comment,
+    FIOData,
     IssueDetails,
     IssueForList,
     Organization,
+    OrganizationNameIndexEntry,
     Project,
+    ProjectNameIndexEntry,
     Task,
     Thread,
     Version,
+    VersionNameIndexEntry,
 )
 
 _TIMESTAMP = "2026-03-26T12:00:00Z"
@@ -41,6 +45,16 @@ _PROJECT_DICT = {
     "gh_repo": "acme/audit",
     "is_deployed": False,
 }
+_PROJECT_DICT_TWO = {
+    **_PROJECT_DICT,
+    "id": 20,
+    "name": " Zebra ",
+}
+_PROJECT_DICT_THREE = {
+    **_PROJECT_DICT,
+    "id": 30,
+    "name": "Ignored",
+}
 _VERSION_DICT = {
     "id": 42,
     "name": "v1.0",
@@ -51,6 +65,16 @@ _VERSION_DICT = {
     "commit_hash": "abc123",
     "is_deployed": False,
 }
+_VERSION_DICT_TWO = {
+    **_VERSION_DICT,
+    "id": 43,
+    "name": " Release Candidate ",
+}
+_VERSION_DICT_THREE = {
+    **_VERSION_DICT,
+    "id": 44,
+    "name": "alpha",
+}
 _TASK_DICT = {
     "id": 99,
     "tool_name": "analysis",
@@ -58,6 +82,13 @@ _TASK_DICT = {
     "version_id": 42,
     "status": "Finished",
     "created_at": _TIMESTAMP,
+}
+_FINDING_DICT = {
+    "state_digest": 123,
+    "analysis_result_id": "analysis-1",
+    "is_filtered": False,
+    "data": {"title": "Unchecked call return value"},
+    "actions": [],
 }
 _COMMENT_DICT = {
     "id": 5,
@@ -230,6 +261,24 @@ class TestToolCalls(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([org.id for org in result], [1])
         self.assertIsInstance(result[0], Organization)
 
+    async def test_get_organization_name_index_filters_and_sorts(self) -> None:
+        with patch.object(
+            server.UsersApi,
+            "get_organizations_users_myorganizations_get",
+            AsyncMock(
+                return_value=[
+                    {**_ORG_DICT, "id": 1, "name": " Zebra "},
+                    {**_ORG_DICT, "id": 2, "name": "alpha"},
+                    {**_ORG_DICT, "id": 99, "name": "Other"},
+                ]
+            ),
+        ):
+            server._allowed_org_ids = frozenset({1, 2})
+            result = await server.get_organization_name_index()
+        self.assertEqual([item.id for item in result], [2, 1])
+        self.assertEqual([item.lookup_key for item in result], ["alpha", "zebra"])
+        self.assertTrue(all(isinstance(item, OrganizationNameIndexEntry) for item in result))
+
     async def test_get_project_returns_project(self) -> None:
         with patch.object(
             server.ProjectsApi,
@@ -240,6 +289,40 @@ class TestToolCalls(unittest.IsolatedAsyncioTestCase):
         self.assertIsInstance(result, Project)
         self.assertEqual(result.id, 10)
 
+    async def test_get_project_name_index_filters_and_sorts(self) -> None:
+        mock = AsyncMock(side_effect=[_PROJECT_DICT_TWO, _PROJECT_DICT])
+        with patch.object(
+            server.ProjectsApi,
+            "get_project_organizations_organization_id_projects_project_id_get",
+            mock,
+        ):
+            server._allowed_project_ids = frozenset({10, 20})
+            result = await server.get_project_name_index(organization_id=1)
+        self.assertEqual([item.id for item in result], [10, 20])
+        self.assertEqual([item.lookup_key for item in result], ["audit", "zebra"])
+        self.assertTrue(all(isinstance(item, ProjectNameIndexEntry) for item in result))
+        self.assertEqual(
+            [call.kwargs for call in mock.await_args_list],
+            [
+                {"organization_id": 1, "project_id": 10},
+                {"organization_id": 1, "project_id": 20},
+            ],
+        )
+
+    async def test_get_project_name_index_skips_404_projects(self) -> None:
+        class _NotFoundError(Exception):
+            status = 404
+
+        mock = AsyncMock(side_effect=[_PROJECT_DICT, _NotFoundError()])
+        with patch.object(
+            server.ProjectsApi,
+            "get_project_organizations_organization_id_projects_project_id_get",
+            mock,
+        ):
+            server._allowed_project_ids = frozenset({10, 20})
+            result = await server.get_project_name_index(organization_id=1)
+        self.assertEqual([item.id for item in result], [10])
+
     async def test_get_latest_version_returns_version(self) -> None:
         with patch.object(
             server.VersionsApi,
@@ -248,6 +331,20 @@ class TestToolCalls(unittest.IsolatedAsyncioTestCase):
         ):
             result = await server.get_latest_version(organization_id=1, project_id=10)
         self.assertIsInstance(result, Version)
+
+    async def test_get_version_name_index_filters_and_sorts(self) -> None:
+        with patch.object(
+            server.VersionsApi,
+            "get_versions_organizations_organization_id_projects_project_id_versions_get",
+            AsyncMock(return_value=[_VERSION_DICT_TWO, _VERSION_DICT, _VERSION_DICT_THREE]),
+        ):
+            result = await server.get_version_name_index(organization_id=1, project_id=10)
+        self.assertEqual([item.id for item in result], [44, 43, 42])
+        self.assertEqual(
+            [item.lookup_key for item in result],
+            ["alpha", "release candidate", "v1.0"],
+        )
+        self.assertTrue(all(isinstance(item, VersionNameIndexEntry) for item in result))
 
     async def test_get_task_info_returns_task(self) -> None:
         with patch.object(
@@ -267,6 +364,16 @@ class TestToolCalls(unittest.IsolatedAsyncioTestCase):
             result = await server.get_task_logs(organization_id=1, task_id=99, step_code="analysis")
         self.assertEqual(result, ["a", "b"])
 
+    async def test_get_task_findings_returns_list(self) -> None:
+        with patch.object(
+            server.TasksApi,
+            "get_task_findings_organizations_organization_id_tasks_task_id_findings_get",
+            AsyncMock(return_value=[_FINDING_DICT]),
+        ):
+            result = await server.get_task_findings(organization_id=1, task_id=99)
+        self.assertEqual(result[0].analysis_result_id, "analysis-1")
+        self.assertIsInstance(result[0], FIOData)
+
     async def test_get_version_comments_forwards_limit_offset(self) -> None:
         mock = AsyncMock(return_value=[_COMMENT_DICT])
         with patch.object(
@@ -278,6 +385,27 @@ class TestToolCalls(unittest.IsolatedAsyncioTestCase):
                 organization_id=1, project_id=10, version_id=3, limit=75, offset=25
             )
         kwargs = mock.await_args.kwargs
+        self.assertEqual(kwargs["limit"], 75)
+        self.assertEqual(kwargs["offset"], 25)
+        self.assertIsInstance(result[0], Comment)
+
+    async def test_get_thread_comments_forwards_thread_limit_offset(self) -> None:
+        mock = AsyncMock(return_value=[_COMMENT_DICT])
+        with patch.object(
+            server.VersionsApi,
+            "get_version_comments_organizations_organization_id_projects_project_id_versions_version_id_comments_get",  # noqa: E501
+            mock,
+        ):
+            result = await server.get_thread_comments(
+                organization_id=1,
+                project_id=10,
+                version_id=3,
+                thread_id=7,
+                limit=75,
+                offset=25,
+            )
+        kwargs = mock.await_args.kwargs
+        self.assertEqual(kwargs["thread_id"], 7)
         self.assertEqual(kwargs["limit"], 75)
         self.assertEqual(kwargs["offset"], 25)
         self.assertIsInstance(result[0], Comment)
@@ -348,6 +476,38 @@ class TestToolCalls(unittest.IsolatedAsyncioTestCase):
             await server.get_project_issues(organization_id=99, project_id=10)
         mock.assert_not_awaited()
 
+    async def test_get_project_name_index_rejection_prevents_sdk_call(self) -> None:
+        mock = AsyncMock(return_value=[_PROJECT_DICT])
+        with patch.object(
+            server.ProjectsApi,
+            "get_project_organizations_organization_id_projects_project_id_get",
+            mock,
+        ), self.assertRaises(RuntimeError):
+            await server.get_project_name_index(organization_id=99)
+        mock.assert_not_awaited()
+
+    async def test_get_version_name_index_rejection_prevents_sdk_call(self) -> None:
+        mock = AsyncMock(return_value=[_VERSION_DICT])
+        with patch.object(
+            server.VersionsApi,
+            "get_versions_organizations_organization_id_projects_project_id_versions_get",
+            mock,
+        ), self.assertRaises(RuntimeError):
+            await server.get_version_name_index(organization_id=1, project_id=99)
+        mock.assert_not_awaited()
+
+    async def test_get_thread_comments_rejection_prevents_sdk_call(self) -> None:
+        mock = AsyncMock(return_value=[_COMMENT_DICT])
+        with patch.object(
+            server.VersionsApi,
+            "get_version_comments_organizations_organization_id_projects_project_id_versions_version_id_comments_get",  # noqa: E501
+            mock,
+        ), self.assertRaises(RuntimeError):
+            await server.get_thread_comments(
+                organization_id=99, project_id=10, version_id=3, thread_id=7
+            )
+        mock.assert_not_awaited()
+
     async def test_non_runtime_error_is_sanitized(self) -> None:
         with patch.object(
             server.UsersApi,
@@ -356,6 +516,9 @@ class TestToolCalls(unittest.IsolatedAsyncioTestCase):
         ), self.assertRaises(RuntimeError) as cm:
             await server.get_my_organizations()
         self.assertNotIn("network secret", str(cm.exception))
+
+    def test_normalize_lookup_key(self) -> None:
+        self.assertEqual(server._normalize_lookup_key("  AcMe DAO  "), "acme dao")
 
 
 class TestFastMCPSchemaValidation(unittest.IsolatedAsyncioTestCase):
@@ -376,6 +539,21 @@ class TestFastMCPSchemaValidation(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises((McpError, Exception)) as cm:
             await server.mcp._tool_manager.call_tool(
                 "get_project", {"organization_id": "1", "project_id": 10}
+            )
+        self.assertIn("validation error", str(cm.exception).lower())
+
+    async def test_string_thread_id_rejected(self) -> None:
+        from mcp.shared.exceptions import McpError
+
+        with self.assertRaises((McpError, Exception)) as cm:
+            await server.mcp._tool_manager.call_tool(
+                "get_thread_comments",
+                {
+                    "organization_id": 1,
+                    "project_id": 10,
+                    "version_id": 42,
+                    "thread_id": "3",
+                },
             )
         self.assertIn("validation error", str(cm.exception).lower())
 
