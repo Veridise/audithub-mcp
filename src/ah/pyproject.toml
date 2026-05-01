@@ -5,7 +5,7 @@ description = "Read-only MCP server for AuditHub"
 requires-python = ">=3.12"
 dependencies = [
     "mcp>=1.0.0",
-    "audithub-client",
+    "audithub-sdk>=0.1.0",
 ]
 
 [project.optional-dependencies]
@@ -28,6 +28,9 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/ah_mcp"]
 
+[tool.hatch.metadata]
+allow-direct-references = true
+
 [tool.ruff]
 line-length = 100
 target-version = "py312"
@@ -42,7 +45,7 @@ known-first-party = ["ah_mcp"]
 python_version = "3.12"
 files = ["src/ah_mcp"]
 strict = true
-# audithub_client is a private library; stubs are not available.
+# audithub_sdk is generated and may not ship complete stubs.
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

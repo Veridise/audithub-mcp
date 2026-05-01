@@ -1,117 +1,53 @@
-"""Read-only MCP server for AuditHub.
-
-.. warning::
-    This MCP server is currently under-developed and has not been tested.
-    Verify all tool outputs manually before acting on them.
+"""Read-only MCP server for AuditHub backed exclusively by ``audithub-sdk``.
 
 Security model
 --------------
-This server is intentionally **read-only**.  All MCP tools exposed here issue
-HTTP GET requests and return data; no tool can create, modify, or delete any
-AuditHub resource.
-
-The enforcement is layered:
-
-1. **Tool surface**: every registered tool is named ``get_*`` and calls either
-   a read-only Python API function or ``_get()``, the sole HTTP helper, which
-   is hard-wired to the ``GET`` method constant imported from
-   ``audithub_client.library.http``.  No ``POST``, ``PATCH``, ``PUT``, or
-   ``DELETE`` path exists in this module.
-
-2. **Credential handling**: OIDC credentials are read from environment
-   variables once at server startup by ``main()``, validated immediately, and
-   cached for the lifetime of the process.  Credentials are never echoed in
-   tool return values and are not accepted as tool arguments.  ``_run_tool()``
-   catches all non-``RuntimeError`` exceptions (which may include credential
-   material in error messages from the underlying OIDC library) and re-raises
-   them as sanitised ``RuntimeError`` instances before they reach FastMCP's
-   error handler.
-
-3. **Admin endpoint exclusion**: this server does not call ``/admin/*``
-   endpoints.  The endpoints reached by ``_get()`` paths are limited to the
-   non-admin thread/comment/issue subset documented in
-   ``references/non_admin_thread_issue_endpoints.tsv``.  Endpoints backed by
-   named ``audithub_client`` API functions (``get_task_info`` etc.) likewise
-   do not touch admin paths.
-
-4. **ID allowlisting**: the server requires explicit allowlists of permitted
-   organization IDs and project IDs, configured at startup via environment
-   variables or CLI flags.  All ID parameters are declared as
-   ``Annotated[int, Field(strict=True, gt=0)]``, so Pydantic/FastMCP rejects
-   non-integers, floats, strings, and non-positive values at the
-   deserialization boundary before the tool body runs.  The allowlist check
-   then confirms the validated integer is in the configured set before any
-   network request is made. Error messages report the rejected ID but do not
-   enumerate the full allowlist, preventing information disclosure.
-
-Required environment variables (or CLI flags)
----------------------------------------------
-``AUDITHUB_BASE_URL``
-    Base URL of the AuditHub REST API, e.g. ``https://audithub.veridise.com/api/v1``.
-``AUDITHUB_OIDC_CONFIGURATION_URL``
-    OpenID Connect discovery document URL for the identity provider.
-``AUDITHUB_OIDC_CLIENT_ID``
-    OIDC client identifier.
-``AUDITHUB_OIDC_CLIENT_SECRET``
-    OIDC client secret.  Keep this value out of logs and shell history.
-``AH_ALLOWED_ORG_IDS`` / ``--allowed-org-ids``
-    Comma-separated list of numeric organization IDs the server may access,
-    e.g. ``"1,2,3"``.  Required.
-``AH_ALLOWED_PROJECT_IDS`` / ``--allowed-project-ids``
-    Comma-separated list of numeric project IDs the server may access,
-    e.g. ``"10,20"``.  Required.
-
-For each allowlist setting the CLI flag takes precedence over the environment
-variable when both are supplied.
+This server is intentionally read-only. Every MCP tool is named ``get_*`` and
+only invokes generated SDK methods for HTTP GET endpoints. No raw HTTP helper
+or mutation-capable AuditHub client remains in this module.
 """
 
 from __future__ import annotations
 
 import argparse
+import inspect
 import os
 import sys
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable, Sequence
+from dataclasses import dataclass
 from typing import Annotated
 
-from audithub_client.api.get_latest_version import GetLatestVersionArgs, api_get_latest_version
-from audithub_client.api.get_my_organizations import api_get_my_organizations
-from audithub_client.api.get_project import GetProjectArgs, api_get_project
-from audithub_client.api.get_task_info import GetTaskInfoArgs, api_get_task_info
-from audithub_client.api.get_task_logs import GetTaskLogsArgs, api_get_task_logs
-from audithub_client.api.get_version_comments import (
-    GetVersionCommentsArgs,
-    api_get_version_comments,
-)
-from audithub_client.library.auth import authentication_retry
-from audithub_client.library.context import AuditHubContext
-from audithub_client.library.http import GET
-from audithub_client.library.net_utils import ensure_success, response_json
+import audithub_sdk
+from audithub_sdk.api.issues_api import IssuesApi
+from audithub_sdk.api.projects_api import ProjectsApi
+from audithub_sdk.api.tasks_api import TasksApi
+from audithub_sdk.api.users_api import UsersApi
+from audithub_sdk.api.versions_api import VersionsApi
+from audithub_sdk_ext import AuthenticatedApiClient, OIDCClientCredentialsContext
 from mcp.server.fastmcp import FastMCP
 from pydantic import Field, TypeAdapter
 
 from ah_mcp.audit import log_call_error, log_call_start, log_call_success
 from ah_mcp.models import (
     Comment,
+    FIOData,
     IssueDetails,
     IssueForList,
     Organization,
+    OrganizationNameIndexEntry,
     Project,
+    ProjectNameIndexEntry,
     Task,
     Thread,
     Version,
+    VersionNameIndexEntry,
 )
-from ah_mcp.retry import get_with_retry
 
-#: Positive integer type used for all AuditHub ID parameters.
-#: ``strict=True`` prevents string/float coercion; ``gt=0`` rejects zero and
-#: negatives.  These constraints are enforced by Pydantic/FastMCP at the
-#: schema-deserialization boundary before any tool body runs.
 _AhId = Annotated[int, Field(strict=True, gt=0)]
 
 mcp = FastMCP("ah")
 
-#: Environment variables required for AuditHub connectivity.
 _REQUIRED_ENV_VARS: tuple[str, ...] = (
     "AUDITHUB_BASE_URL",
     "AUDITHUB_OIDC_CONFIGURATION_URL",
@@ -119,80 +55,58 @@ _REQUIRED_ENV_VARS: tuple[str, ...] = (
     "AUDITHUB_OIDC_CLIENT_SECRET",
 )
 
-#: Cached context built once at startup; ``None`` until ``main()`` is called.
-_context: AuditHubContext | None = None
 
-#: Allowlisted organization IDs; populated at startup.
+@dataclass(frozen=True)
+class AuditHubSdkContext:
+    """Static SDK configuration derived from environment variables at startup."""
+
+    configuration: audithub_sdk.Configuration
+    auth_context: OIDCClientCredentialsContext
+
+
+_context: AuditHubSdkContext | None = None
 _allowed_org_ids: frozenset[int] = frozenset()
-
-#: Allowlisted project IDs; populated at startup.
 _allowed_project_ids: frozenset[int] = frozenset()
 
-# TypeAdapters for validating list responses from the API.
 _org_ta = TypeAdapter(list[Organization])
 _comment_ta = TypeAdapter(list[Comment])
+_fio_data_ta = TypeAdapter(list[FIOData])
 _thread_ta = TypeAdapter(list[Thread])
 _issue_list_ta = TypeAdapter(list[IssueForList])
+_project_ta = TypeAdapter(list[Project])
+_version_ta = TypeAdapter(list[Version])
 _str_list_ta = TypeAdapter(list[str])
 
 
-# ---------------------------------------------------------------------------
-# Startup helpers
-# ---------------------------------------------------------------------------
-
-
 def _parse_id_list(value: str, flag: str) -> frozenset[int]:
-    """Parse a comma-separated string of integers into a frozenset.
-
-    Args:
-        value: Raw string, e.g. ``"1,2,3"``.
-        flag:  Name of the flag or env var for error messages.
-
-    Returns:
-        Frozenset of parsed integers.
-
-    Raises:
-        SystemExit: If any token is not a valid integer.
-    """
+    """Parse a comma-separated string of positive integers into a frozenset."""
     try:
         ids = frozenset(int(tok.strip()) for tok in value.split(",") if tok.strip())
     except ValueError:
         sys.exit(f"Error: {flag} must be a comma-separated list of integers, got: {value!r}")
-    non_positive = [i for i in ids if i <= 0]
+    non_positive = [item for item in ids if item <= 0]
     if non_positive:
         sys.exit(f"Error: {flag} contains non-positive IDs: {sorted(non_positive)}")
     return ids
 
 
-def _build_context() -> AuditHubContext:
-    """Read AuditHub credentials from the current environment and return a context.
-
-    Raises ``RuntimeError`` listing every missing variable so the error is
-    actionable and does not expose partial credential state.  Called once by
-    ``main()`` at server startup.
-    """
+def _build_context() -> AuditHubSdkContext:
+    """Read AuditHub SDK/auth configuration from environment variables."""
     missing = [v for v in _REQUIRED_ENV_VARS if not os.environ.get(v)]
     if missing:
         raise RuntimeError(f"Missing required environment variables: {', '.join(missing)}")
-    return AuditHubContext(
-        base_url=os.environ["AUDITHUB_BASE_URL"],
+
+    configuration = audithub_sdk.Configuration(host=os.environ["AUDITHUB_BASE_URL"])
+    auth_context = OIDCClientCredentialsContext(
         oidc_configuration_url=os.environ["AUDITHUB_OIDC_CONFIGURATION_URL"],
-        oidc_client_id=os.environ["AUDITHUB_OIDC_CLIENT_ID"],
-        oidc_client_secret=os.environ["AUDITHUB_OIDC_CLIENT_SECRET"],
+        client_id=os.environ["AUDITHUB_OIDC_CLIENT_ID"],
+        client_secret=os.environ["AUDITHUB_OIDC_CLIENT_SECRET"],
     )
+    return AuditHubSdkContext(configuration=configuration, auth_context=auth_context)
 
 
-def _ctx() -> AuditHubContext:
-    """Return the cached ``AuditHubContext``, raising if startup was skipped.
-
-    Under normal operation the context is built and validated once in
-    ``main()`` from the environment variables present when the server process
-    starts.  Tools call this function to retrieve the cached value; they do
-    not re-read the environment on every invocation.
-
-    Raises ``RuntimeError`` if called before ``main()`` initialises the
-    context (e.g. in tests that mock this function directly).
-    """
+def _ctx() -> AuditHubSdkContext:
+    """Return the cached SDK context."""
     if _context is None:
         raise RuntimeError(
             "AuditHub context is not initialised. "
@@ -202,19 +116,8 @@ def _ctx() -> AuditHubContext:
     return _context
 
 
-# ---------------------------------------------------------------------------
-# Allowlist enforcement
-# ---------------------------------------------------------------------------
-
-
 def _assert_org_allowed(organization_id: int) -> None:
-    """Raise ``RuntimeError`` if *organization_id* is not in the allowlist.
-
-    Type and bounds validation (strict integer, positive) are enforced by
-    Pydantic at the deserialization boundary before this function is called.
-    This check runs before any network request so disallowed IDs never reach
-    the AuditHub API.
-    """
+    """Raise if *organization_id* is not allowlisted."""
     if organization_id not in _allowed_org_ids:
         raise RuntimeError(
             f"Organization ID {organization_id} is not in the configured allowlist. "
@@ -223,13 +126,7 @@ def _assert_org_allowed(organization_id: int) -> None:
 
 
 def _assert_project_allowed(project_id: int) -> None:
-    """Raise ``RuntimeError`` if *project_id* is not in the allowlist.
-
-    Type and bounds validation (strict integer, positive) are enforced by
-    Pydantic at the deserialization boundary before this function is called.
-    This check runs before any network request so disallowed IDs never reach
-    the AuditHub API.
-    """
+    """Raise if *project_id* is not allowlisted."""
     if project_id not in _allowed_project_ids:
         raise RuntimeError(
             f"Project ID {project_id} is not in the configured allowlist. "
@@ -237,58 +134,8 @@ def _assert_project_allowed(project_id: int) -> None:
         )
 
 
-# ---------------------------------------------------------------------------
-# HTTP helper
-# ---------------------------------------------------------------------------
-
-
-def _get(path: str, params: dict[str, int] | None = None) -> object:
-    """Issue an authenticated HTTP **GET** request to *path* on the AuditHub API.
-
-    This is the only HTTP helper in this module.  It is deliberately hard-wired
-    to ``GET``; it does not accept an HTTP method argument and cannot be
-    repurposed for mutating requests.
-
-    Args:
-        path: URL path relative to ``AUDITHUB_BASE_URL``, e.g.
-            ``/organizations/1/projects/2/issues``.
-        params: Optional query-string parameters.
-
-    Returns:
-        Parsed JSON response body (to be validated by the caller).
-
-    Raises:
-        RuntimeError: If credentials are missing, the OIDC flow fails, or the
-            server returns a non-2xx status.
-    """
-    if not path.startswith("/"):
-        raise ValueError(f"_get() path must start with '/': {path!r}")
-    ctx = _ctx()
-    response = get_with_retry(
-        lambda: authentication_retry(
-            ctx,
-            GET,
-            url=f"{ctx.base_url.rstrip('/')}{path}",
-            params=params,
-        )
-    )
-    ensure_success(response)
-    return response_json(response)
-
-
 def _build_pagination_params(limit: int | None, offset: int | None) -> dict[str, int] | None:
-    """Build a query-params dict from optional limit/offset values.
-
-    Validates that *limit* and *offset* are non-negative when provided.
-    This enforces the ``ge=0`` constraint at the Python call boundary as well
-    as at the FastMCP schema boundary.
-
-    Returns ``None`` when both are ``None`` so callers can pass the result
-    directly to ``_get(..., params=...)`` without a separate ``or None`` guard.
-
-    Raises:
-        ValueError: If *limit* or *offset* is negative.
-    """
+    """Build a query-params dict from optional limit/offset values."""
     if limit is not None and limit < 0:
         raise ValueError(f"limit must be >= 0, got {limit!r}")
     if offset is not None and offset < 0:
@@ -301,45 +148,49 @@ def _build_pagination_params(limit: int | None, offset: int | None) -> dict[str,
     return params or None
 
 
-def _run_tool[T](
-    fn: Callable[[], T],
+def _slice_paginated[T](items: Sequence[T], limit: int | None, offset: int | None) -> list[T]:
+    """Apply client-side limit/offset slicing."""
+    _build_pagination_params(limit, offset)
+    start = 0 if offset is None else offset
+    end = None if limit is None else start + limit
+    return list(items[start:end])
+
+
+def _normalize_lookup_key(name: str) -> str:
+    """Normalize a user-visible name into a deterministic case-insensitive lookup key."""
+    return name.strip().casefold()
+
+
+async def _with_api_client[T](fn: Callable[[AuthenticatedApiClient], Awaitable[T]]) -> T:
+    """Create an authenticated SDK client for a single tool invocation."""
+    ctx = _ctx()
+    async with AuthenticatedApiClient(ctx.configuration, auth_context=ctx.auth_context) as client:
+        return await fn(client)
+
+
+def _safe_exception_message(exc: Exception) -> str:
+    """Return a sanitized message safe to propagate to MCP callers."""
+    status = getattr(exc, "status", None)
+    if isinstance(status, int):
+        return f"AuditHub API request failed with status {status}."
+    return "An internal error occurred."
+
+
+async def _run_tool[T](
+    fn: Callable[[], T | Awaitable[T]],
     *,
     tool_name: str = "",
     safe_args: dict[str, int | None] | None = None,
 ) -> T:
-    """Execute a tool function, sanitizing exceptions to prevent credential leakage.
-
-    ``audithub_client``'s OIDC library may include credential material in
-    exception messages or chained context.  This wrapper catches all
-    non-``RuntimeError`` exceptions and re-raises them as plain
-    ``RuntimeError`` with only ``str(exc)`` — no traceback, no chained
-    cause — before they reach FastMCP's error handler.
-
-    ``RuntimeError`` (raised by allowlist checks, missing config, and
-    AuditHub API errors) propagates with its ``__context__`` cleared to
-    prevent chained credential leakage; it never contains raw credential values.
-
-    When *tool_name* is provided, call start/success/error events are emitted
-    to the ``ah_mcp.audit`` logger.  *safe_args* is included in the start
-    event; never pass credential values or step_code content here.
-
-    Args:
-        fn: Zero-argument callable returning the tool's result.
-        tool_name: MCP tool name for audit logging.  Empty string disables logging.
-        safe_args: Arguments safe to include in audit log entries.
-
-    Returns:
-        The return value of *fn*.
-
-    Raises:
-        RuntimeError: On any failure, with a safe error message.
-    """
+    """Execute a tool function, sanitizing exceptions to prevent secret leakage."""
     if tool_name:
         log_call_start(tool_name, safe_args or {})
     start = time.monotonic()
     sanitized: RuntimeError | None = None
     try:
         result = fn()
+        if inspect.isawaitable(result):
+            result = await result
         if tool_name:
             log_call_success(tool_name, (time.monotonic() - start) * 1000)
         return result
@@ -351,54 +202,71 @@ def _run_tool[T](
         raise
     except Exception as exc:
         elapsed_ms = (time.monotonic() - start) * 1000
-        # Log the actual message for operators; do NOT propagate it to the caller.
-        # Exception messages from the OIDC/HTTP library may contain credential material.
-        logged = bool(tool_name)
-        if logged:
+        if tool_name:
             log_call_error(tool_name, str(exc), elapsed_ms)
-        msg = (
-            "An internal error occurred. Details have been logged."
-            if logged
-            else "An internal error occurred."
+            sanitized = RuntimeError(
+                "An internal error occurred. Details have been logged."
+                if not isinstance(getattr(exc, "status", None), int)
+                else _safe_exception_message(exc)
+            )
+        else:
+            sanitized = RuntimeError(_safe_exception_message(exc))
+    raise sanitized
+
+
+@mcp.tool()
+async def get_my_organizations() -> list[Organization]:
+    """List AuditHub organizations the authenticated user belongs to."""
+
+    async def _run() -> list[Organization]:
+        organizations = await _with_api_client(
+            lambda client: UsersApi(client).get_organizations_users_myorganizations_get()
         )
-        sanitized = RuntimeError(msg)
-    raise sanitized  # raised outside except block so __context__ is not set
+        orgs = _org_ta.validate_python(organizations)
+        return [org for org in orgs if org.id in _allowed_org_ids]
 
-
-# ---------------------------------------------------------------------------
-# MCP tools — read-only GET operations only
-# ---------------------------------------------------------------------------
+    return await _run_tool(_run, tool_name="get_my_organizations", safe_args={})
 
 
 @mcp.tool()
-def get_my_organizations() -> list[Organization]:
-    """List AuditHub organizations the authenticated user belongs to.
+async def get_organization_name_index() -> list[OrganizationNameIndexEntry]:
+    """List allowlisted AuditHub organizations as deterministic name lookup entries."""
 
-    Returns only organizations whose IDs are in the configured allowlist.
-    """
-    def _run() -> list[Organization]:
-        orgs = _org_ta.validate_python(api_get_my_organizations(_ctx()))
-        return [o for o in orgs if o.id in _allowed_org_ids]
-    return _run_tool(_run, tool_name="get_my_organizations", safe_args={})
+    async def _run() -> list[OrganizationNameIndexEntry]:
+        organizations = await _with_api_client(
+            lambda client: UsersApi(client).get_organizations_users_myorganizations_get()
+        )
+        orgs = _org_ta.validate_python(organizations)
+        entries = [
+            OrganizationNameIndexEntry(
+                id=org.id,
+                name=org.name,
+                lookup_key=_normalize_lookup_key(org.name),
+            )
+            for org in orgs
+            if org.id in _allowed_org_ids
+        ]
+        return sorted(entries, key=lambda entry: (entry.lookup_key, entry.id))
+
+    return await _run_tool(_run, tool_name="get_organization_name_index", safe_args={})
 
 
 @mcp.tool()
-def get_project(organization_id: _AhId, project_id: _AhId) -> Project:
-    """Get details for a specific AuditHub project.
+async def get_project(organization_id: _AhId, project_id: _AhId) -> Project:
+    """Get details for a specific AuditHub project."""
 
-    Args:
-        organization_id: Numeric AuditHub organization ID.
-        project_id: Numeric AuditHub project ID.
-    """
-    def _run() -> Project:
+    async def _run() -> Project:
         _assert_org_allowed(organization_id)
         _assert_project_allowed(project_id)
-        return Project.model_validate(
-            api_get_project(
-                _ctx(), GetProjectArgs(organization_id=organization_id, project_id=project_id)
+        project = await _with_api_client(
+            lambda client: ProjectsApi(client).get_project_organizations_organization_id_projects_project_id_get(  # noqa: E501
+                organization_id=organization_id,
+                project_id=project_id,
             )
         )
-    return _run_tool(
+        return Project.model_validate(project)
+
+    return await _run_tool(
         _run,
         tool_name="get_project",
         safe_args={"organization_id": organization_id, "project_id": project_id},
@@ -406,23 +274,62 @@ def get_project(organization_id: _AhId, project_id: _AhId) -> Project:
 
 
 @mcp.tool()
-def get_latest_version(organization_id: _AhId, project_id: _AhId) -> Version:
-    """Get the latest version of an AuditHub project.
+async def get_project_name_index(organization_id: _AhId) -> list[ProjectNameIndexEntry]:
+    """List allowlisted projects in an organization as deterministic name lookup entries."""
 
-    Args:
-        organization_id: Numeric AuditHub organization ID.
-        project_id: Numeric AuditHub project ID.
-    """
-    def _run() -> Version:
+    async def _run() -> list[ProjectNameIndexEntry]:
+        _assert_org_allowed(organization_id)
+
+        async def _fetch_project(project_id: int) -> Project:
+            project = await _with_api_client(
+                lambda client: ProjectsApi(client).get_project_organizations_organization_id_projects_project_id_get(  # noqa: E501
+                    organization_id=organization_id,
+                    project_id=project_id,
+                )
+            )
+            return Project.model_validate(project)
+
+        entries: list[ProjectNameIndexEntry] = []
+        for project_id in sorted(_allowed_project_ids):
+            try:
+                validated_project = await _fetch_project(project_id)
+            except Exception as exc:
+                status = getattr(exc, "status", None)
+                if isinstance(status, int) and status == 404:
+                    continue
+                raise
+            entries.append(
+                ProjectNameIndexEntry(
+                    id=validated_project.id,
+                    name=validated_project.name,
+                    lookup_key=_normalize_lookup_key(validated_project.name),
+                )
+            )
+        return sorted(entries, key=lambda entry: (entry.lookup_key, entry.id))
+
+    return await _run_tool(
+        _run,
+        tool_name="get_project_name_index",
+        safe_args={"organization_id": organization_id},
+    )
+
+
+@mcp.tool()
+async def get_latest_version(organization_id: _AhId, project_id: _AhId) -> Version:
+    """Get the latest version of an AuditHub project."""
+
+    async def _run() -> Version:
         _assert_org_allowed(organization_id)
         _assert_project_allowed(project_id)
-        return Version.model_validate(
-            api_get_latest_version(
-                _ctx(),
-                GetLatestVersionArgs(organization_id=organization_id, project_id=project_id),
+        version = await _with_api_client(
+            lambda client: VersionsApi(client).get_latest_version_organizations_organization_id_projects_project_id_versions_latest_get(  # noqa: E501
+                organization_id=organization_id,
+                project_id=project_id,
             )
         )
-    return _run_tool(
+        return Version.model_validate(version)
+
+    return await _run_tool(
         _run,
         tool_name="get_latest_version",
         safe_args={"organization_id": organization_id, "project_id": project_id},
@@ -430,21 +337,52 @@ def get_latest_version(organization_id: _AhId, project_id: _AhId) -> Version:
 
 
 @mcp.tool()
-def get_task_info(organization_id: _AhId, task_id: _AhId) -> Task:
-    """Get status and details for an AuditHub task.
+async def get_version_name_index(
+    organization_id: _AhId, project_id: _AhId
+) -> list[VersionNameIndexEntry]:
+    """List project versions as deterministic name lookup entries."""
 
-    Args:
-        organization_id: Numeric AuditHub organization ID.
-        task_id: Numeric AuditHub task ID.
-    """
-    def _run() -> Task:
+    async def _run() -> list[VersionNameIndexEntry]:
         _assert_org_allowed(organization_id)
-        return Task.model_validate(
-            api_get_task_info(
-                _ctx(), GetTaskInfoArgs(organization_id=organization_id, task_id=task_id)
+        _assert_project_allowed(project_id)
+        versions = await _with_api_client(
+            lambda client: VersionsApi(client).get_versions_organizations_organization_id_projects_project_id_versions_get(  # noqa: E501
+                organization_id=organization_id,
+                project_id=project_id,
             )
         )
-    return _run_tool(
+        entries = [
+            VersionNameIndexEntry(
+                id=version.id,
+                name=version.name,
+                lookup_key=_normalize_lookup_key(version.name),
+            )
+            for version in _version_ta.validate_python(versions)
+        ]
+        return sorted(entries, key=lambda entry: (entry.lookup_key, entry.id))
+
+    return await _run_tool(
+        _run,
+        tool_name="get_version_name_index",
+        safe_args={"organization_id": organization_id, "project_id": project_id},
+    )
+
+
+@mcp.tool()
+async def get_task_info(organization_id: _AhId, task_id: _AhId) -> Task:
+    """Get status and details for an AuditHub task."""
+
+    async def _run() -> Task:
+        _assert_org_allowed(organization_id)
+        task = await _with_api_client(
+            lambda client: TasksApi(client).get_info_organizations_organization_id_tasks_task_id_get(  # noqa: E501
+                organization_id=organization_id,
+                task_id=task_id,
+            )
+        )
+        return Task.model_validate(task)
+
+    return await _run_tool(
         _run,
         tool_name="get_task_info",
         safe_args={"organization_id": organization_id, "task_id": task_id},
@@ -452,27 +390,21 @@ def get_task_info(organization_id: _AhId, task_id: _AhId) -> Task:
 
 
 @mcp.tool()
-def get_task_logs(organization_id: _AhId, task_id: _AhId, step_code: str) -> list[str]:
-    """Get logs for a specific step of an AuditHub task.
+async def get_task_logs(organization_id: _AhId, task_id: _AhId, step_code: str) -> list[str]:
+    """Get logs for a specific step of an AuditHub task."""
 
-    Args:
-        organization_id: Numeric AuditHub organization ID.
-        task_id: Numeric AuditHub task ID.
-        step_code: Step code identifying which task step's logs to fetch.
-            Pass the value of ``TaskStep.code`` from ``get_task_info`` response.
-    """
-    def _run() -> list[str]:
+    async def _run() -> list[str]:
         _assert_org_allowed(organization_id)
-        return _str_list_ta.validate_python(
-            api_get_task_logs(
-                _ctx(),
-                GetTaskLogsArgs(
-                    organization_id=organization_id, task_id=task_id, step_code=step_code
-                ),
+        logs = await _with_api_client(
+            lambda client: TasksApi(client).get_output_organizations_organization_id_tasks_task_id_step_code_output_get(  # noqa: E501
+                organization_id=organization_id,
+                task_id=task_id,
+                step_code=step_code,
             )
         )
-    # step_code is intentionally excluded from safe_args — it may contain file paths
-    return _run_tool(
+        return _str_list_ta.validate_python(logs)
+
+    return await _run_tool(
         _run,
         tool_name="get_task_logs",
         safe_args={"organization_id": organization_id, "task_id": task_id},
@@ -480,42 +412,56 @@ def get_task_logs(organization_id: _AhId, task_id: _AhId, step_code: str) -> lis
 
 
 @mcp.tool()
-def get_version_comments(
+async def get_task_findings(organization_id: _AhId, task_id: _AhId) -> list[FIOData]:
+    """Get findings produced by an AuditHub task execution."""
+
+    async def _run() -> list[FIOData]:
+        _assert_org_allowed(organization_id)
+        findings = await _with_api_client(
+            lambda client: TasksApi(client).get_task_findings_organizations_organization_id_tasks_task_id_findings_get(  # noqa: E501
+                organization_id=organization_id,
+                task_id=task_id,
+            )
+        )
+        return _fio_data_ta.validate_python(findings)
+
+    return await _run_tool(
+        _run,
+        tool_name="get_task_findings",
+        safe_args={"organization_id": organization_id, "task_id": task_id},
+    )
+
+
+@mcp.tool()
+async def get_version_comments(
     organization_id: _AhId,
     project_id: _AhId,
     version_id: _AhId,
     limit: Annotated[int, Field(ge=0)] | None = 200,
     offset: Annotated[int, Field(ge=0)] | None = 0,
 ) -> list[Comment]:
-    """Get comments for a specific project version.
+    """Get comments for a specific project version. Use this only to aggregate comments 
+       at the version level, if you are looking for a specific thread id use 
+       get_thread_comments instead.
 
-    Args:
-        organization_id: Numeric AuditHub organization ID.
-        project_id: Numeric AuditHub project ID.
-        version_id: Numeric AuditHub version ID.
-        limit: Maximum number of results to return (default 200).
-        offset: Pagination offset (default 0).
-    """
-    def _run() -> list[Comment]:
-        if limit is not None and limit < 0:
-            raise ValueError(f"limit must be >= 0, got {limit!r}")
-        if offset is not None and offset < 0:
-            raise ValueError(f"offset must be >= 0, got {offset!r}")
+       This can return large objects, prefer pagination to avoid truncation by MCP."""
+
+    async def _run() -> list[Comment]:
+        _build_pagination_params(limit, offset)
         _assert_org_allowed(organization_id)
         _assert_project_allowed(project_id)
-        return _comment_ta.validate_python(
-            api_get_version_comments(
-                _ctx(),
-                GetVersionCommentsArgs(
-                    organization_id=organization_id,
-                    project_id=project_id,
-                    version_id=version_id,
-                    limit=limit,
-                    offset=offset,
-                ),
+        comments = await _with_api_client(
+            lambda client: VersionsApi(client).get_version_comments_organizations_organization_id_projects_project_id_versions_version_id_comments_get(  # noqa: E501
+                organization_id=organization_id,
+                project_id=project_id,
+                version_id=version_id,
+                limit=limit,
+                offset=offset,
             )
         )
-    return _run_tool(
+        return _comment_ta.validate_python(comments)
+
+    return await _run_tool(
         _run,
         tool_name="get_version_comments",
         safe_args={
@@ -529,33 +475,29 @@ def get_version_comments(
 
 
 @mcp.tool()
-def get_version_comment_threads(
+async def get_version_comment_threads(
     organization_id: _AhId,
     project_id: _AhId,
     version_id: _AhId,
     limit: Annotated[int, Field(ge=0)] | None = 200,
     offset: Annotated[int, Field(ge=0)] | None = 0,
 ) -> list[Thread]:
-    """Get comment threads for a specific project version.
+    """Get comment threads for a specific project version."""
 
-    Args:
-        organization_id: Numeric AuditHub organization ID.
-        project_id: Numeric AuditHub project ID.
-        version_id: Numeric AuditHub version ID.
-        limit: Maximum number of results to return (default 200).
-        offset: Pagination offset (default 0).
-    """
-    def _run() -> list[Thread]:
+    async def _run() -> list[Thread]:
+        _build_pagination_params(limit, offset)
         _assert_org_allowed(organization_id)
         _assert_project_allowed(project_id)
-        path = (
-            f"/organizations/{organization_id}/projects/{project_id}"
-            f"/versions/{version_id}/comment-threads"
+        threads = await _with_api_client(
+            lambda client: VersionsApi(client).get_version_comment_threads_organizations_organization_id_projects_project_id_versions_version_id_comment_threads_get(  # noqa: E501
+                organization_id=organization_id,
+                project_id=project_id,
+                version_id=version_id,
+            )
         )
-        return _thread_ta.validate_python(
-            _get(path, params=_build_pagination_params(limit, offset))
-        )
-    return _run_tool(
+        return _slice_paginated(_thread_ta.validate_python(threads), limit, offset)
+
+    return await _run_tool(
         _run,
         tool_name="get_version_comment_threads",
         safe_args={
@@ -569,30 +511,69 @@ def get_version_comment_threads(
 
 
 @mcp.tool()
-def get_project_issues(
+async def get_thread_comments(
+    organization_id: _AhId,
+    project_id: _AhId,
+    version_id: _AhId,
+    thread_id: _AhId,
+    limit: Annotated[int, Field(ge=0)] | None = 200,
+    offset: Annotated[int, Field(ge=0)] | None = 0,
+) -> list[Comment]:
+    """Get comments for a specific thread within a project version.
+       This can return large objects, prefer pagination to avoid truncation by MCP."""
+
+    async def _run() -> list[Comment]:
+        _build_pagination_params(limit, offset)
+        _assert_org_allowed(organization_id)
+        _assert_project_allowed(project_id)
+        comments = await _with_api_client(
+            lambda client: VersionsApi(client).get_version_comments_organizations_organization_id_projects_project_id_versions_version_id_comments_get(  # noqa: E501
+                organization_id=organization_id,
+                project_id=project_id,
+                version_id=version_id,
+                thread_id=thread_id,
+                limit=limit,
+                offset=offset,
+            )
+        )
+        return _comment_ta.validate_python(comments)
+
+    return await _run_tool(
+        _run,
+        tool_name="get_thread_comments",
+        safe_args={
+            "organization_id": organization_id,
+            "project_id": project_id,
+            "version_id": version_id,
+            "thread_id": thread_id,
+            "limit": limit,
+            "offset": offset,
+        },
+    )
+
+
+@mcp.tool()
+async def get_project_issues(
     organization_id: _AhId,
     project_id: _AhId,
     limit: Annotated[int, Field(ge=0)] | None = 200,
     offset: Annotated[int, Field(ge=0)] | None = 0,
 ) -> list[IssueForList]:
-    """Get all issues for an AuditHub project.
+    """Get all issues for an AuditHub project."""
 
-    Args:
-        organization_id: Numeric AuditHub organization ID.
-        project_id: Numeric AuditHub project ID.
-        limit: Maximum number of results to return (default 200).
-        offset: Pagination offset (default 0).
-    """
-    def _run() -> list[IssueForList]:
+    async def _run() -> list[IssueForList]:
+        _build_pagination_params(limit, offset)
         _assert_org_allowed(organization_id)
         _assert_project_allowed(project_id)
-        return _issue_list_ta.validate_python(
-            _get(
-                f"/organizations/{organization_id}/projects/{project_id}/issues",
-                params=_build_pagination_params(limit, offset),
+        issues = await _with_api_client(
+            lambda client: IssuesApi(client).get_issues_organizations_organization_id_projects_project_id_issues_get(  # noqa: E501
+                organization_id=organization_id,
+                project_id=project_id,
             )
         )
-    return _run_tool(
+        return _slice_paginated(_issue_list_ta.validate_python(issues), limit, offset)
+
+    return await _run_tool(
         _run,
         tool_name="get_project_issues",
         safe_args={
@@ -605,27 +586,24 @@ def get_project_issues(
 
 
 @mcp.tool()
-def get_project_issue(organization_id: _AhId, project_id: _AhId, issue_id: _AhId) -> IssueDetails:
-    """Get a specific issue from an AuditHub project.
+async def get_project_issue(
+    organization_id: _AhId, project_id: _AhId, issue_id: _AhId
+) -> IssueDetails:
+    """Get a specific issue from an AuditHub project."""
 
-    Returns an ``IssueDetails`` with a ``kind`` field (``"public"`` or
-    ``"complete"``).  When ``kind == "complete"``, ``data`` is an
-    ``IssueComplete`` containing audit metadata (``created_by``, ``raised_by``,
-    ``promoted_findings``, etc.).  When ``kind == "public"``, ``data`` is a
-    base ``Issue`` with only the public fields.
-
-    Args:
-        organization_id: Numeric AuditHub organization ID.
-        project_id: Numeric AuditHub project ID.
-        issue_id: Numeric AuditHub issue ID.
-    """
-    def _run() -> IssueDetails:
+    async def _run() -> IssueDetails:
         _assert_org_allowed(organization_id)
         _assert_project_allowed(project_id)
-        return IssueDetails.model_validate(
-            _get(f"/organizations/{organization_id}/projects/{project_id}/issues/{issue_id}")
+        issue = await _with_api_client(
+            lambda client: IssuesApi(client).get_issue_organizations_organization_id_projects_project_id_issues_issue_id_get(  # noqa: E501
+                organization_id=organization_id,
+                project_id=project_id,
+                issue_id=issue_id,
+            )
         )
-    return _run_tool(
+        return IssueDetails.model_validate(issue)
+
+    return await _run_tool(
         _run,
         tool_name="get_project_issue",
         safe_args={
@@ -637,34 +615,33 @@ def get_project_issue(organization_id: _AhId, project_id: _AhId, issue_id: _AhId
 
 
 @mcp.tool()
-def get_project_comments(
+async def get_project_comments(
     organization_id: _AhId,
     project_id: _AhId,
     limit: Annotated[int, Field(ge=0)] | None = 200,
     offset: Annotated[int, Field(ge=0)] | None = 0,
 ) -> list[Comment]:
-    """Get all comments for an AuditHub project across all versions.
+    """Get all comments for an AuditHub project across all versions. Use this only to
+       aggregate comments at the project level, if you are looking for a specific thread
+       id use get_thread_comments instead.
+       
+       This can return large objects, prefer pagination to avoid truncation by MCP."""
 
-    Use this when you do not have a specific version ID.  Prefer
-    ``get_version_comments`` when you already have a ``version_id``; it is
-    more targeted and returns the same ``Comment`` shape.
-
-    Args:
-        organization_id: Numeric AuditHub organization ID.
-        project_id: Numeric AuditHub project ID.
-        limit: Maximum number of results to return (default 200).
-        offset: Pagination offset (default 0).
-    """
-    def _run() -> list[Comment]:
+    async def _run() -> list[Comment]:
+        _build_pagination_params(limit, offset)
         _assert_org_allowed(organization_id)
         _assert_project_allowed(project_id)
-        return _comment_ta.validate_python(
-            _get(
-                f"/organizations/{organization_id}/projects/{project_id}/comments",
-                params=_build_pagination_params(limit, offset),
+        comments = await _with_api_client(
+            lambda client: ProjectsApi(client).get_project_comments_organizations_organization_id_projects_project_id_comments_get(  # noqa: E501
+                organization_id=organization_id,
+                project_id=project_id,
+                limit=200 if limit is None else limit,
+                offset=0 if offset is None else offset,
             )
         )
-    return _run_tool(
+        return _comment_ta.validate_python(comments)
+
+    return await _run_tool(
         _run,
         tool_name="get_project_comments",
         safe_args={
@@ -676,26 +653,8 @@ def get_project_comments(
     )
 
 
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
-
-
 def main() -> None:
-    """Entry point for the ``ah-mcp`` console script.
-
-    Parses allowlist flags, reads and validates credentials from the
-    environment, then starts the MCP event loop.  All configuration is
-    validated up-front; missing or invalid settings cause an immediate exit
-    with a clear error message rather than failing silently on the first tool
-    call.
-
-    Allowlists may be supplied as CLI flags or environment variables; the CLI
-    flag takes precedence when both are present::
-
-        ah-mcp --allowed-org-ids 1,2 --allowed-project-ids 10,20
-        AH_ALLOWED_ORG_IDS=1,2 AH_ALLOWED_PROJECT_IDS=10,20 ah-mcp
-    """
+    """Entry point for the ``ah-mcp`` console script."""
     parser = argparse.ArgumentParser(
         description="AuditHub read-only MCP server",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -704,19 +663,18 @@ def main() -> None:
         "--allowed-org-ids",
         metavar="IDS",
         help=(
-            "Comma-separated organization IDs the server may access"
-            " (overrides AH_ALLOWED_ORG_IDS)."
+            "Comma-separated organization IDs the server may access "
+            "(overrides AH_ALLOWED_ORG_IDS)."
         ),
     )
     parser.add_argument(
         "--allowed-project-ids",
         metavar="IDS",
         help=(
-            "Comma-separated project IDs the server may access"
-            " (overrides AH_ALLOWED_PROJECT_IDS)."
+            "Comma-separated project IDs the server may access "
+            "(overrides AH_ALLOWED_PROJECT_IDS)."
         ),
     )
-    # parse_known_args so any args intended for the MCP runtime are left alone.
     args, _ = parser.parse_known_args()
 
     org_ids_raw = args.allowed_org_ids or os.environ.get("AH_ALLOWED_ORG_IDS", "")
@@ -739,7 +697,6 @@ def main() -> None:
         proj_ids_raw, "--allowed-project-ids / AH_ALLOWED_PROJECT_IDS"
     )
     _context = _build_context()
-
     mcp.run()
 
 
