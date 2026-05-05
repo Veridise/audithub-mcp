@@ -21,6 +21,10 @@ class Organization(_BaseSdkModel):
     gh_connected: bool
 
 
+class MyOrganization(Organization):
+    is_favorite: bool | None = False
+
+
 class Project(_BaseSdkModel):
     project_root: str
     src_path: str
@@ -142,7 +146,7 @@ class _ApiBase:
 
 
 class UsersApi(_ApiBase):
-    async def get_organizations_users_myorganizations_get(self) -> list[Organization]:
+    async def get_organizations_users_myorganizations_get(self) -> list[MyOrganization]:
         raise NotImplementedError
 
 
@@ -241,6 +245,7 @@ def install_sdk_stubs() -> None:
     _module("audithub_sdk.models")
     for name, cls in (
         ("organization", Organization),
+        ("my_organization", MyOrganization),
         ("project", Project),
         ("version", Version),
         ("task", Task),

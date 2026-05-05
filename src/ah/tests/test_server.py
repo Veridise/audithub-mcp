@@ -16,7 +16,7 @@ from ah_mcp.models import (  # noqa: E402
     FIOData,
     IssueDetails,
     IssueForList,
-    Organization,
+    MyOrganization,
     OrganizationNameIndexEntry,
     Project,
     ProjectNameIndexEntry,
@@ -259,7 +259,7 @@ class TestToolCalls(unittest.IsolatedAsyncioTestCase):
         ):
             result = await server.get_my_organizations()
         self.assertEqual([org.id for org in result], [1])
-        self.assertIsInstance(result[0], Organization)
+        self.assertIsInstance(result[0], MyOrganization)
 
     async def test_get_organization_name_index_filters_and_sorts(self) -> None:
         with patch.object(
