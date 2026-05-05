@@ -21,7 +21,7 @@ from ah_mcp.models import (  # noqa: E402
     Comment,
     IssueDetails,
     IssueForList,
-    Organization,
+    MyOrganization,
     Project,
     Thread,
     Version,
@@ -53,7 +53,7 @@ def teardown_module() -> None:
 def test_list_organizations() -> None:
     orgs = _run(server.get_my_organizations())
     assert isinstance(orgs, list)
-    assert all(isinstance(org, Organization) for org in orgs)
+    assert all(isinstance(org, MyOrganization) for org in orgs)
 
 
 def test_get_project() -> None:

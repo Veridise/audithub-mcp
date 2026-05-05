@@ -5,17 +5,7 @@ description = "Read-only MCP server for AuditHub"
 requires-python = ">=3.12"
 dependencies = [
     "mcp>=1.0.0",
-    "audithub-sdk>=0.1.0",
-]
-
-[project.optional-dependencies]
-dev = [
-    "ruff>=0.4.0",
-    "mypy>=1.10.0",
-    "pytest>=7.0.0",
-    "pytest-cov>=4.0.0",
-    "pytest-asyncio>=0.23.0",
-    "pip-audit>=2.7.0",
+    "audithub-sdk==1.0.2",
 ]
 
 [project.scripts]

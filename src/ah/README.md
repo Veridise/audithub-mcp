@@ -10,19 +10,38 @@ Read-only MCP server for [AuditHub](https://audithub.veridise.com). Exposes Audi
 
 - Python 3.12+
 - [uv](https://docs.astral.sh/uv/)
-- Git access to `https://github.com/Veridise/audithub-sdk`
 
 ## Installation
 
 ```bash
-uv pip install -e .
-
-# Runtime + dev tools (ruff, mypy, pytest)
-uv pip install -e ".[dev]"
+# From the repo root, install the workspace and default dev tooling into the active virtual environment
+uv sync --active
 ```
 
-`uv` will resolve `audithub-sdk` directly from GitHub via the dependency declared in
-`pyproject.toml`.
+## Override `audithub-sdk` Locally
+
+To test `ah-mcp` against a local checkout of `audithub-sdk`, add a path source override in the
+workspace root [`pyproject.toml`](../../pyproject.toml), then re-sync the environment.
+
+Example root `pyproject.toml` override:
+
+```toml
+[tool.uv.sources]
+ah-mcp = { workspace = true }
+audithub-sdk = { path = "/absolute/path/to/audithub-sdk", editable = true }
+```
+
+Then run:
+
+```bash
+uv sync --active
+```
+
+This keeps `ah-mcp` installed from the workspace while forcing `audithub-sdk` to resolve from the
+local filesystem checkout in editable mode.
+
+To return to the pinned version, remove the `audithub-sdk` entry from
+`[tool.uv.sources]` in the workspace root and run `uv sync --active` again.
 
 ## Configuration
 

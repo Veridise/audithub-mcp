@@ -10,16 +10,12 @@ Veridise MCP servers for AI-assisted auditing. Each server exposes read-only acc
 
 - Python 3.12+
 - [uv](https://docs.astral.sh/uv/)
-- `audithub-client` (private library, installed from a local clone)
 
 ## Quick install
 
 ```bash
-# Install the private dependency from your local clone
-uv pip install -e /path/to/AuditHub-Client
-
-# Install a server (e.g. ah)
-uv pip install -e src/ah
+# From the repo root, install the workspace and default dev tooling into the active virtual environment
+uv sync --active
 ```
 
 ## Configuration
