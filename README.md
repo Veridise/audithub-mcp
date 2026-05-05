@@ -33,7 +33,10 @@ Add to your agent's MCP configuration file (`.codex/config.json` for Codex, `.cl
   "mcpServers": {
     "ah": {
       "command": "bash",
-      "args": ["-c", "set -a && source /absolute/path/to/ah.env && set +a && ah-mcp"]
+      "args": [
+        "-c",
+        "cd /absolute/path/to/mcp-servers && set -a && source /absolute/path/to/ah.env && set +a && uv run ah-mcp"
+      ]
     }
   }
 }
