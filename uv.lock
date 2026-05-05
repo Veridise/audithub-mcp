@@ -23,7 +23,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "audithub-sdk", specifier = "==0.1.0" },
+    { name = "audithub-sdk", specifier = "==1.0.2" },
     { name = "mcp", specifier = ">=1.0.0" },
 ]
 
@@ -60,7 +60,7 @@ wheels = [
 
 [[package]]
 name = "audithub-sdk"
-version = "0.1.0"
+version = "1.0.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "httpx" },
@@ -68,9 +68,9 @@ dependencies = [
     { name = "python-dateutil" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/22/12/5ec47c6d4c922230f1088c40cce9d2fdee153920eff2f74079f70f36c00f/audithub_sdk-0.1.0.tar.gz", hash = "sha256:e8c082405d8d1f4a81bf3239f664341a91b7b14d66033bc75a99ec80581db757", size = 163146, upload-time = "2026-03-31T09:39:01.521Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/52/82/17918202c9875ae77334c5ecc9b50b5b0715e363b47fa7627351e80ad725/audithub_sdk-1.0.2.tar.gz", hash = "sha256:6f329e491418b091031b5c9b4413d7210ae1fdac47ae3637b3684267639411de", size = 169140, upload-time = "2026-04-27T16:46:47.787Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/ac/55/7d08e32cebbf98b476e17f47d61e67845a9d64166e206b4c1e19aee85c11/audithub_sdk-0.1.0-py3-none-any.whl", hash = "sha256:06ece741468872ca109252ebc81fc75bab674792e8b23371b691fcc24e028f8d", size = 356313, upload-time = "2026-03-31T09:39:00.061Z" },
+    { url = "https://files.pythonhosted.org/packages/16/c0/a6572ab78bdcc515ee2b3f64fcfc1054c2893b263303be62859cad07f46c/audithub_sdk-1.0.2-py3-none-any.whl", hash = "sha256:ea3f04045b7d49c9746d5fca345409c9a1871a405d8d31405d0e2ded8ff8be23", size = 368464, upload-time = "2026-04-27T16:46:46.29Z" },
 ]
 
 [[package]]
