@@ -18,6 +18,12 @@ Read-only MCP server for [AuditHub](https://audithub.veridise.com). Exposes Audi
 uv sync --active
 ```
 
+If your virtual environment is not already activated, run the command through `uv` instead:
+
+```bash
+uv run ah-mcp --help
+```
+
 ## Override `audithub-sdk` Locally
 
 To test `ah-mcp` against a local checkout of `audithub-sdk`, add a path source override in the
@@ -63,7 +69,7 @@ CLI flags `--allowed-org-ids` and `--allowed-project-ids` override the correspon
 Copy `.env.example` to `.env`, fill in your values, then:
 
 ```bash
-set -a && source .env && set +a && ah-mcp
+set -a && source .env && set +a && uv run ah-mcp
 ```
 
 All six variables in `.env` must be set before the server starts. Missing variables cause an immediate exit with a clear error listing which are absent.
@@ -79,13 +85,18 @@ Add to your agent's MCP configuration (e.g. `.codex/config.json` for Codex, `.cl
   "mcpServers": {
     "ah": {
       "command": "bash",
-      "args": ["-c", "set -a && source /absolute/path/to/ah.env && set +a && ah-mcp"]
+      "args": [
+        "-c",
+        "cd /absolute/path/to/mcp-servers && set -a && source /absolute/path/to/ah.env && set +a && uv run ah-mcp"
+      ]
     }
   }
 }
 ```
 
-Replace `/absolute/path/to/ah.env` with the actual path to your `.env` file. Your `.env` file (see `.env.example`) holds all credentials and allowlist IDs; no secrets belong in the agent config file.
+Replace `/absolute/path/to/mcp-servers` with this repository path and `/absolute/path/to/ah.env`
+with the actual path to your `.env` file. Your `.env` file (see `.env.example`) holds all
+credentials and allowlist IDs; no secrets belong in the agent config file.
 
 ## Available MCP tools
 
