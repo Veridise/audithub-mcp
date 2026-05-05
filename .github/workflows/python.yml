@@ -35,17 +35,9 @@ jobs:
           python-version-file: "src/${{ matrix.server }}/.python-version"
 
       - name: Install dependencies
+        working-directory: "."
         run: |
-          uv venv
-          uv pip install \
-            "mcp>=1.0.0" \
-            ruff \
-            "mypy>=1.10.0" \
-            "pytest>=7.0.0" \
-            "pytest-cov>=4.0.0" \
-            "pytest-asyncio>=0.23.0" \
-            pip-audit
-          uv pip install --no-deps -e .
+          uv sync --frozen
 
       - name: Supply chain audit
         run: uv run pip-audit
@@ -59,11 +51,8 @@ jobs:
       - name: Type check (mypy)
         run: uv run mypy
 
-      - name: Unit tests (audithub_client absent)
-        run: |
-          # Explicitly remove audithub_client if it was resolved by the environment
-          uv pip uninstall audithub-client 2>/dev/null || true
-          uv run python -m pytest -m "not integration"
+      - name: Unit tests
+        run: uv run python -m pytest -m "not integration"
 
   integration:
     name: "Integration / ${{ matrix.server }}"
@@ -92,18 +81,9 @@ jobs:
           python-version-file: "src/${{ matrix.server }}/.python-version"
 
       - name: Install dependencies
+        working-directory: "."
         run: |
-          uv venv
-          uv pip install \
-            "mcp>=1.0.0" \
-            "pytest>=7.0.0" \
-            "pytest-cov>=4.0.0" \
-            "pytest-asyncio>=0.23.0"
-          uv pip install --no-deps -e .
-
-      - name: Install audithub_client
-        run: uv pip install audithub-client
-        continue-on-error: true
+          uv sync --frozen
 
       - name: Integration tests
         run: uv run python -m pytest
