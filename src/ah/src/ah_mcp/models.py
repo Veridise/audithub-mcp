@@ -4,7 +4,7 @@ from audithub_sdk.models.comment import Comment
 from audithub_sdk.models.fio_data import FIOData
 from audithub_sdk.models.issue_details import IssueDetails
 from audithub_sdk.models.issue_for_list import IssueForList
-from audithub_sdk.models.organization import Organization
+from audithub_sdk.models.my_organization import MyOrganization
 from audithub_sdk.models.project import Project
 from audithub_sdk.models.task import Task
 from audithub_sdk.models.thread import Thread
@@ -46,7 +46,7 @@ __all__ = [
     "FIOData",
     "IssueDetails",
     "IssueForList",
-    "Organization",
+    "MyOrganization",
     "OrganizationNameIndexEntry",
     "Project",
     "ProjectNameIndexEntry",

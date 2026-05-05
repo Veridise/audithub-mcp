@@ -34,7 +34,7 @@ from ah_mcp.models import (
     FIOData,
     IssueDetails,
     IssueForList,
-    Organization,
+    MyOrganization,
     OrganizationNameIndexEntry,
     Project,
     ProjectNameIndexEntry,
@@ -68,7 +68,7 @@ _context: AuditHubSdkContext | None = None
 _allowed_org_ids: frozenset[int] = frozenset()
 _allowed_project_ids: frozenset[int] = frozenset()
 
-_org_ta = TypeAdapter(list[Organization])
+_org_ta = TypeAdapter(list[MyOrganization])
 _comment_ta = TypeAdapter(list[Comment])
 _fio_data_ta = TypeAdapter(list[FIOData])
 _thread_ta = TypeAdapter(list[Thread])
@@ -215,10 +215,10 @@ async def _run_tool[T](
 
 
 @mcp.tool()
-async def get_my_organizations() -> list[Organization]:
+async def get_my_organizations() -> list[MyOrganization]:
     """List AuditHub organizations the authenticated user belongs to."""
 
-    async def _run() -> list[Organization]:
+    async def _run() -> list[MyOrganization]:
         organizations = await _with_api_client(
             lambda client: UsersApi(client).get_organizations_users_myorganizations_get()
         )
