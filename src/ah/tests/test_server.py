@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import sys
 import unittest
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from tests.sdk_stubs import install_sdk_stubs
@@ -26,6 +27,8 @@ from ah_mcp.models import (  # noqa: E402
     Project,
     ProjectNameIndexEntry,
     Task,
+    TaskArtifact,
+    TaskArtifactContent,
     TaskCreation,
     Thread,
     Version,
@@ -91,6 +94,18 @@ _TASK_DICT = {
     "version_id": 42,
     "status": "Finished",
     "created_at": _TIMESTAMP,
+}
+_ARTIFACT_DICT = {
+    "id": "artifact-1",
+    "name": "reports/result.json",
+    "step_code": "analysis",
+    "mime_type": "application/json",
+    "is_fio": False,
+    "presigned_url": "https://example.com/private?token=SECRET",
+}
+_TASK_WITH_ARTIFACTS_DICT = {
+    **_TASK_DICT,
+    "artifacts": [_ARTIFACT_DICT],
 }
 _TASK_CREATION_DICT = {
     "task_id": 123,
@@ -482,6 +497,67 @@ class TestToolCalls(unittest.IsolatedAsyncioTestCase):
         ):
             result = await server.get_task_info(organization_id=1, task_id=99)
         self.assertIsInstance(result, Task)
+
+    async def test_get_task_info_sanitizes_artifact_presigned_urls(self) -> None:
+        with patch.object(
+            server.TasksApi,
+            "get_info_organizations_organization_id_tasks_task_id_get",
+            AsyncMock(return_value=_TASK_WITH_ARTIFACTS_DICT),
+        ):
+            result = await server.get_task_info(organization_id=1, task_id=99)
+        self.assertIsNotNone(result.artifacts)
+        assert result.artifacts is not None
+        self.assertIsNone(result.artifacts[0].presigned_url)
+
+    async def test_get_task_artifacts_returns_sanitized_metadata(self) -> None:
+        with patch.object(
+            server.TasksApi,
+            "get_info_organizations_organization_id_tasks_task_id_get",
+            AsyncMock(return_value=_TASK_WITH_ARTIFACTS_DICT),
+        ):
+            result = await server.get_task_artifacts(organization_id=1, task_id=99)
+        self.assertEqual(len(result), 1)
+        self.assertIsInstance(result[0], TaskArtifact)
+        self.assertEqual(result[0].id, "artifact-1")
+        self.assertFalse(hasattr(result[0], "presigned_url"))
+
+    async def test_get_task_artifact_returns_base64_content(self) -> None:
+        response = SimpleNamespace(
+            raw_data=b'{"ok": true}',
+            headers={"content-type": "application/json"},
+        )
+        with patch.object(
+            server.TasksApi,
+            "get_artifact_organizations_organization_id_tasks_task_id_artifacts_artifact_id_get_with_http_info",  # noqa: E501
+            AsyncMock(return_value=response),
+        ) as mock_get:
+            result = await server.get_task_artifact(
+                organization_id=1,
+                task_id=99,
+                artifact_id="artifact-1",
+            )
+        self.assertIsInstance(result, TaskArtifactContent)
+        self.assertEqual(result.artifact_id, "artifact-1")
+        self.assertEqual(result.content_type, "application/json")
+        self.assertEqual(result.content_length, 12)
+        self.assertEqual(result.content_base64, "eyJvayI6IHRydWV9")
+        self.assertEqual(result.content_encoding, "base64")
+        self.assertEqual(mock_get.await_args.kwargs["artifact_id"], "artifact-1")
+
+    async def test_get_task_artifact_rejects_oversized_content(self) -> None:
+        response = SimpleNamespace(raw_data=b"abcd", headers={})
+        with patch.object(
+            server.TasksApi,
+            "get_artifact_organizations_organization_id_tasks_task_id_artifacts_artifact_id_get_with_http_info",  # noqa: E501
+            AsyncMock(return_value=response),
+        ), self.assertRaises(RuntimeError) as cm:
+            await server.get_task_artifact(
+                organization_id=1,
+                task_id=99,
+                artifact_id="artifact-1",
+                max_bytes=3,
+            )
+        self.assertIn("exceeding max_bytes=3", str(cm.exception))
 
     async def test_get_task_logs_returns_list(self) -> None:
         with patch.object(

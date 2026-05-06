@@ -70,6 +70,30 @@ class VersionCreation(BaseModel):
     message: str
 
 
+class TaskArtifact(BaseModel):
+    """Sanitized metadata for an artifact produced by an AuditHub task."""
+
+    model_config = ConfigDict(frozen=True)
+
+    id: Annotated[str, Field(min_length=1)]
+    name: str
+    step_code: str
+    mime_type: str
+    is_fio: bool
+
+
+class TaskArtifactContent(BaseModel):
+    """Base64-encoded content for an AuditHub task artifact."""
+
+    model_config = ConfigDict(frozen=True)
+
+    artifact_id: Annotated[str, Field(min_length=1)]
+    content_length: Annotated[int, Field(ge=0)]
+    content_base64: str
+    content_encoding: Literal["base64"] = "base64"
+    content_type: str | None = None
+
+
 class OrCaVersionSpecReference(BaseModel):
     """OrCa V spec reference to a file inside the project version archive."""
 
@@ -229,6 +253,8 @@ __all__ = [
     "Project",
     "ProjectNameIndexEntry",
     "Task",
+    "TaskArtifact",
+    "TaskArtifactContent",
     "TaskCreation",
     "Thread",
     "Version",

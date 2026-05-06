@@ -111,6 +111,8 @@ credentials and allowlist IDs; no secrets belong in the agent config file.
 | `get_latest_version` | Get the latest version of a project |
 | `get_version_name_index` | List project versions as deterministic name-to-ID lookup entries |
 | `get_task_info` | Get status and details for an AuditHub task |
+| `get_task_artifacts` | List sanitized artifact metadata for an AuditHub task |
+| `get_task_artifact` | Fetch a task artifact by ID as base64-encoded content |
 | `get_task_logs` | Get logs for a specific step of a task |
 | `get_task_findings` | Get findings produced by a task execution |
 | `get_version_comments` | Get comments for a specific project version |

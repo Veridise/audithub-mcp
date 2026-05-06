@@ -10,11 +10,12 @@ registered only when their narrow opt-in gates are explicitly enabled.
 from __future__ import annotations
 
 import argparse
+import base64
 import inspect
 import os
 import sys
 import time
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Annotated
 
@@ -69,6 +70,8 @@ from ah_mcp.models import (
     Project,
     ProjectNameIndexEntry,
     Task,
+    TaskArtifact,
+    TaskArtifactContent,
     TaskCreation,
     Thread,
     Version,
@@ -78,6 +81,8 @@ from ah_mcp.models import (
 )
 
 _AhId = Annotated[int, Field(strict=True, gt=0)]
+_ArtifactId = Annotated[str, Field(min_length=1)]
+_MaxBytes = Annotated[int, Field(strict=True, gt=0)]
 
 mcp = FastMCP("ah")
 
@@ -113,6 +118,8 @@ _version_ta = TypeAdapter(list[Version])
 _str_list_ta = TypeAdapter(list[str])
 _orca_task_creation_ta = TypeAdapter(TaskCreation)
 _version_creation_ta = TypeAdapter(VersionCreation)
+
+_DEFAULT_ARTIFACT_MAX_BYTES = 5 * 1024 * 1024
 
 _TASK_RUN_TOOL_NAME = "run_orca_task"
 _VERSION_CREATION_TOOL_NAME = "create_version_from_url"
@@ -265,6 +272,35 @@ def _slice_paginated[T](items: Sequence[T], limit: int | None, offset: int | Non
 def _normalize_lookup_key(name: str) -> str:
     """Normalize a user-visible name into a deterministic case-insensitive lookup key."""
     return name.strip().casefold()
+
+
+def _sanitize_task(task: Task) -> Task:
+    """Remove credential-like fields from SDK task objects before returning them."""
+    if task.artifacts is not None:
+        for artifact in task.artifacts:
+            artifact.presigned_url = None
+    return task
+
+
+def _task_artifacts(task: Task) -> list[TaskArtifact]:
+    """Return sanitized task artifact metadata."""
+    if task.artifacts is None:
+        return []
+    return [
+        TaskArtifact.model_validate(artifact, from_attributes=True)
+        for artifact in task.artifacts
+    ]
+
+
+def _response_header(headers: Mapping[str, str] | None, name: str) -> str | None:
+    """Read a response header without depending on a concrete header mapping type."""
+    if headers is None:
+        return None
+    folded_name = name.casefold()
+    for key, value in headers.items():
+        if key.casefold() == folded_name:
+            return value
+    return None
 
 
 async def _with_api_client[T](fn: Callable[[AuthenticatedApiClient], Awaitable[T]]) -> T:
@@ -491,12 +527,74 @@ async def get_task_info(organization_id: _AhId, task_id: _AhId) -> Task:
                 task_id=task_id,
             )
         )
-        return Task.model_validate(task)
+        return _sanitize_task(Task.model_validate(task))
 
     return await _run_tool(
         _run,
         tool_name="get_task_info",
         safe_args={"organization_id": organization_id, "task_id": task_id},
+    )
+
+
+@mcp.tool()
+async def get_task_artifacts(organization_id: _AhId, task_id: _AhId) -> list[TaskArtifact]:
+    """List sanitized artifact metadata for an AuditHub task."""
+
+    async def _run() -> list[TaskArtifact]:
+        _assert_org_allowed(organization_id)
+        task = await _with_api_client(
+            lambda client: TasksApi(client).get_info_organizations_organization_id_tasks_task_id_get(  # noqa: E501
+                organization_id=organization_id,
+                task_id=task_id,
+            )
+        )
+        return _task_artifacts(Task.model_validate(task))
+
+    return await _run_tool(
+        _run,
+        tool_name="get_task_artifacts",
+        safe_args={"organization_id": organization_id, "task_id": task_id},
+    )
+
+
+@mcp.tool()
+async def get_task_artifact(
+    organization_id: _AhId,
+    task_id: _AhId,
+    artifact_id: _ArtifactId,
+    max_bytes: _MaxBytes | None = _DEFAULT_ARTIFACT_MAX_BYTES,
+) -> TaskArtifactContent:
+    """Fetch an AuditHub task artifact as base64-encoded content."""
+
+    async def _run() -> TaskArtifactContent:
+        _assert_org_allowed(organization_id)
+        response = await _with_api_client(
+            lambda client: TasksApi(client).get_artifact_organizations_organization_id_tasks_task_id_artifacts_artifact_id_get_with_http_info(  # noqa: E501
+                organization_id=organization_id,
+                task_id=task_id,
+                artifact_id=artifact_id,
+            )
+        )
+        raw_data = response.raw_data
+        if max_bytes is not None and len(raw_data) > max_bytes:
+            raise RuntimeError(
+                f"Artifact content is {len(raw_data)} bytes, exceeding max_bytes={max_bytes}."
+            )
+        return TaskArtifactContent(
+            artifact_id=artifact_id,
+            content_length=len(raw_data),
+            content_base64=base64.b64encode(raw_data).decode("ascii"),
+            content_type=_response_header(response.headers, "content-type"),
+        )
+
+    return await _run_tool(
+        _run,
+        tool_name="get_task_artifact",
+        safe_args={
+            "organization_id": organization_id,
+            "task_id": task_id,
+            "max_bytes": max_bytes,
+        },
     )
 
 
