@@ -10,6 +10,24 @@ from tests.sdk_stubs import install_sdk_stubs
 install_sdk_stubs()
 
 import ah_mcp.server as server  # noqa: E402
+from ah_mcp.models import (  # noqa: E402
+    OrCaAdHocHintReference,
+    OrCaAdHocSpecReference,
+    OrCaParametersInput,
+    OrCaTaskInput,
+)
+
+
+def _orca_task_input() -> OrCaTaskInput:
+    return OrCaTaskInput(
+        specs_override=[
+            OrCaAdHocSpecReference(filename="secret.spec", contents="SECRET_SPEC_CONTENT")
+        ],
+        hints_override=[
+            OrCaAdHocHintReference(filename="secret.hint", contents="SECRET_HINT_CONTENT")
+        ],
+        parameters=OrCaParametersInput(timeout=60),
+    )
 
 
 class TestDisallowedIds(unittest.IsolatedAsyncioTestCase):
@@ -20,6 +38,7 @@ class TestDisallowedIds(unittest.IsolatedAsyncioTestCase):
     async def asyncTearDown(self) -> None:
         server._allowed_org_ids = frozenset()
         server._allowed_project_ids = frozenset()
+        server._set_task_runs_enabled(False)
 
     async def test_get_project_disallowed_org(self) -> None:
         with self.assertRaises(RuntimeError) as cm:
@@ -96,6 +115,42 @@ class TestDisallowedIds(unittest.IsolatedAsyncioTestCase):
             await server.get_version_name_index(organization_id=999, project_id=10)
         mock.assert_not_awaited()
 
+    async def test_run_orca_disallowed_org_rejected_before_sdk_call(self) -> None:
+        server._set_task_runs_enabled(True)
+        mock = AsyncMock(return_value={"task_id": 1, "message": "created"})
+        with patch.object(
+            server.ToolsApi,
+            "post_tool_orca_organizations_organization_id_projects_project_id_versions_version_id_tools_orca_post",  # noqa: E501
+            mock,
+        ), self.assertRaises(RuntimeError) as cm:
+            await server.run_orca_task(
+                organization_id=999,
+                project_id=10,
+                version_id=42,
+                task_input=_orca_task_input(),
+            )
+        self.assertIn("999", str(cm.exception))
+        self.assertNotIn("frozenset", str(cm.exception))
+        mock.assert_not_awaited()
+
+    async def test_run_orca_disallowed_project_rejected_before_sdk_call(self) -> None:
+        server._set_task_runs_enabled(True)
+        mock = AsyncMock(return_value={"task_id": 1, "message": "created"})
+        with patch.object(
+            server.ToolsApi,
+            "post_tool_orca_organizations_organization_id_projects_project_id_versions_version_id_tools_orca_post",  # noqa: E501
+            mock,
+        ), self.assertRaises(RuntimeError) as cm:
+            await server.run_orca_task(
+                organization_id=1,
+                project_id=999,
+                version_id=42,
+                task_input=_orca_task_input(),
+            )
+        self.assertIn("999", str(cm.exception))
+        self.assertNotIn("frozenset", str(cm.exception))
+        mock.assert_not_awaited()
+
 
 class TestStepCodePrivacy(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
@@ -112,6 +167,7 @@ class TestStepCodePrivacy(unittest.IsolatedAsyncioTestCase):
     async def asyncTearDown(self) -> None:
         server._allowed_org_ids = frozenset()
         server._context = None
+        server._set_task_runs_enabled(False)
 
     async def test_step_code_not_in_audit_log(self) -> None:
         import ah_mcp.audit as audit_mod
@@ -126,6 +182,65 @@ class TestStepCodePrivacy(unittest.IsolatedAsyncioTestCase):
         for call in mock_info.call_args_list:
             args = " ".join(str(arg) for arg in call.args)
             self.assertNotIn(step_code, args)
+
+
+class TestOrCaTaskPrivacy(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self) -> None:
+        server._allowed_org_ids = frozenset({1})
+        server._allowed_project_ids = frozenset({10})
+        server._set_task_runs_enabled(True)
+        server._context = server.AuditHubSdkContext(
+            configuration=server.audithub_sdk.Configuration(host="https://example.com/api/v1"),
+            auth_context=server.OIDCClientCredentialsContext(
+                oidc_configuration_url="https://issuer/.well-known/openid-configuration",
+                client_id="client-id",
+                client_secret="client-secret",
+            ),
+        )
+
+    async def asyncTearDown(self) -> None:
+        server._allowed_org_ids = frozenset()
+        server._allowed_project_ids = frozenset()
+        server._context = None
+        server._set_task_runs_enabled(False)
+
+    async def test_orca_payload_not_in_audit_log(self) -> None:
+        import ah_mcp.audit as audit_mod
+
+        with patch.object(
+            server.ToolsApi,
+            "post_tool_orca_organizations_organization_id_projects_project_id_versions_version_id_tools_orca_post",  # noqa: E501
+            AsyncMock(return_value={"task_id": 1, "message": "created"}),
+        ), patch.object(audit_mod.logger, "info") as mock_info:
+            await server.run_orca_task(
+                organization_id=1,
+                project_id=10,
+                version_id=42,
+                task_input=_orca_task_input(),
+            )
+        for call in mock_info.call_args_list:
+            args = " ".join(str(arg) for arg in call.args)
+            self.assertNotIn("SECRET_SPEC_CONTENT", args)
+            self.assertNotIn("SECRET_HINT_CONTENT", args)
+
+    async def test_orca_payload_not_in_error_log(self) -> None:
+        import ah_mcp.audit as audit_mod
+
+        with patch.object(
+            server.ToolsApi,
+            "post_tool_orca_organizations_organization_id_projects_project_id_versions_version_id_tools_orca_post",  # noqa: E501
+            AsyncMock(side_effect=ValueError("SECRET_SPEC_CONTENT SECRET_HINT_CONTENT")),
+        ), patch.object(audit_mod.logger, "error") as mock_error, self.assertRaises(RuntimeError):
+            await server.run_orca_task(
+                organization_id=1,
+                project_id=10,
+                version_id=42,
+                task_input=_orca_task_input(),
+            )
+        for call in mock_error.call_args_list:
+            args = " ".join(str(arg) for arg in call.args)
+            self.assertNotIn("SECRET_SPEC_CONTENT", args)
+            self.assertNotIn("SECRET_HINT_CONTENT", args)
 
 
 class TestErrorSanitization(unittest.IsolatedAsyncioTestCase):

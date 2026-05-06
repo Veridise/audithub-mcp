@@ -2,15 +2,15 @@
 
 ## Security model
 
-All MCP servers in this repository are read-only by design. They expose data from Veridise services to AI agents but cannot create, modify, or delete any resource.
+MCP servers in this repository are read-only by default. They expose data from Veridise services to AI agents and cannot create, modify, or delete resources unless a server documents an explicit opt-in mutation mode.
 
 ## Security invariants
 
 Every server must satisfy these four properties:
 
-1. **Read-only tool surface**: every registered MCP tool is named `get_*`. No mutation-named tool (create, update, delete, patch, post, put, set) is present.
+1. **Default read-only tool surface**: default registered MCP tools are named `get_*`. Mutation-named tools require an explicit opt-in gate and narrowly scoped security tests.
 
-2. **GET-only HTTP**: the sole HTTP helper is hard-wired to the GET method. No POST, PUT, PATCH, or DELETE path exists in any server module. Admin endpoints (`/admin/*`) are excluded.
+2. **Default GET-only HTTP**: read-only tools only invoke GET paths. POST, PUT, PATCH, and DELETE paths require a documented opt-in mutation mode. Admin endpoints (`/admin/*`) are always excluded.
 
 3. **Credential isolation**: OIDC credentials are read from environment variables once at server startup. They are never echoed in tool return values, error messages, or log output. Exceptions from underlying HTTP/OIDC libraries are caught and re-raised as sanitized `RuntimeError` instances before reaching the MCP caller.
 

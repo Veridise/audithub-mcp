@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import sys
 import unittest
 from unittest.mock import AsyncMock, patch
 
@@ -17,10 +18,15 @@ from ah_mcp.models import (  # noqa: E402
     IssueDetails,
     IssueForList,
     MyOrganization,
+    OrCaFuzzingBlacklistEntry,
+    OrCaParametersInput,
+    OrCaTaskInput,
+    OrCaVersionSpecReference,
     OrganizationNameIndexEntry,
     Project,
     ProjectNameIndexEntry,
     Task,
+    TaskCreation,
     Thread,
     Version,
     VersionNameIndexEntry,
@@ -82,6 +88,10 @@ _TASK_DICT = {
     "version_id": 42,
     "status": "Finished",
     "created_at": _TIMESTAMP,
+}
+_TASK_CREATION_DICT = {
+    "task_id": 123,
+    "message": "Task created",
 }
 _FINDING_DICT = {
     "state_digest": 123,
@@ -157,12 +167,29 @@ def setUpModule() -> None:
     server._context = None
     server._allowed_org_ids = frozenset()
     server._allowed_project_ids = frozenset()
+    server._set_task_runs_enabled(False)
 
 
 def tearDownModule() -> None:
     server._context = None
     server._allowed_org_ids = frozenset()
     server._allowed_project_ids = frozenset()
+    server._set_task_runs_enabled(False)
+
+
+def _orca_task_input() -> OrCaTaskInput:
+    return OrCaTaskInput(
+        name="or-ca-test",
+        specs_override=[OrCaVersionSpecReference(relative_path="specs/invariant.spec")],
+        parameters=OrCaParametersInput(
+            fuzz_pure=True,
+            fuzz_targets=["Vault.deposit"],
+            fuzzing_blacklist=[
+                OrCaFuzzingBlacklistEntry(contract="Vault", function="emergencyWithdraw")
+            ],
+            timeout=30,
+        ),
+    )
 
 
 class TestBuildContext(unittest.TestCase):
@@ -204,6 +231,44 @@ class TestCtxCache(unittest.TestCase):
         self.assertIsNotNone(server._context)
         self.assertEqual(server._allowed_org_ids, frozenset({1, 2}))
         self.assertEqual(server._allowed_project_ids, frozenset({10, 20}))
+        self.assertFalse(server._task_runs_enabled)
+        self.assertFalse(server._is_tool_registered("run_orca_task"))
+
+    def test_main_enables_task_runs_from_env(self) -> None:
+        allow_env = {
+            "AH_ALLOWED_ORG_IDS": "1",
+            "AH_ALLOWED_PROJECT_IDS": "10",
+            "AH_ENABLE_TASK_RUNS": "1",
+            **_FULL_ENV,
+        }
+        server._context = None
+        try:
+            with patch.dict(os.environ, allow_env, clear=True), patch.object(server.mcp, "run"):
+                server.main()
+            self.assertTrue(server._task_runs_enabled)
+            self.assertTrue(server._is_tool_registered("run_orca_task"))
+        finally:
+            server._set_task_runs_enabled(False)
+
+    def test_main_enables_task_runs_from_cli_flag(self) -> None:
+        allow_env = {
+            "AH_ALLOWED_ORG_IDS": "1",
+            "AH_ALLOWED_PROJECT_IDS": "10",
+            **_FULL_ENV,
+        }
+        server._context = None
+        argv = ["ah-mcp", "--enable-task-runs"]
+        try:
+            with (
+                patch.dict(os.environ, allow_env, clear=True),
+                patch.object(sys, "argv", argv),
+                patch.object(server.mcp, "run"),
+            ):
+                server.main()
+            self.assertTrue(server._task_runs_enabled)
+            self.assertTrue(server._is_tool_registered("run_orca_task"))
+        finally:
+            server._set_task_runs_enabled(False)
 
 
 class TestRunTool(unittest.IsolatedAsyncioTestCase):
@@ -232,17 +297,28 @@ class TestRunTool(unittest.IsolatedAsyncioTestCase):
 
 
 class TestReadOnlyToolSurface(unittest.TestCase):
-    def test_all_tools_start_with_get(self) -> None:
+    def tearDown(self) -> None:
+        server._set_task_runs_enabled(False)
+
+    def test_default_tools_start_with_get(self) -> None:
+        server._set_task_runs_enabled(False)
         names = list(server.mcp._tool_manager._tools.keys())
         self.assertGreater(len(names), 0)
+        self.assertNotIn("run_orca_task", names)
         for name in names:
             self.assertTrue(name.startswith("get_"))
+
+    def test_run_orca_task_registers_only_when_enabled(self) -> None:
+        server._set_task_runs_enabled(True)
+        names = list(server.mcp._tool_manager._tools.keys())
+        self.assertIn("run_orca_task", names)
 
 
 class TestToolCalls(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
         server._allowed_org_ids = frozenset({1})
         server._allowed_project_ids = frozenset({10})
+        server._set_task_runs_enabled(False)
         with patch.dict(os.environ, _FULL_ENV, clear=True):
             server._context = server._build_context()
 
@@ -250,6 +326,7 @@ class TestToolCalls(unittest.IsolatedAsyncioTestCase):
         server._context = None
         server._allowed_org_ids = frozenset()
         server._allowed_project_ids = frozenset()
+        server._set_task_runs_enabled(False)
 
     async def test_get_my_organizations_filters_allowlist(self) -> None:
         with patch.object(
@@ -373,6 +450,48 @@ class TestToolCalls(unittest.IsolatedAsyncioTestCase):
             result = await server.get_task_findings(organization_id=1, task_id=99)
         self.assertEqual(result[0].analysis_result_id, "analysis-1")
         self.assertIsInstance(result[0], FIOData)
+
+    async def test_run_orca_task_disabled_prevents_sdk_call(self) -> None:
+        mock = AsyncMock(return_value=_TASK_CREATION_DICT)
+        with patch.object(
+            server.ToolsApi,
+            "post_tool_orca_organizations_organization_id_projects_project_id_versions_version_id_tools_orca_post",  # noqa: E501
+            mock,
+        ), self.assertRaises(RuntimeError) as cm:
+            await server.run_orca_task(
+                organization_id=1,
+                project_id=10,
+                version_id=42,
+                task_input=_orca_task_input(),
+            )
+        self.assertIn("task runs are disabled", str(cm.exception))
+        mock.assert_not_awaited()
+
+    async def test_run_orca_task_returns_task_creation(self) -> None:
+        server._set_task_runs_enabled(True)
+        mock = AsyncMock(return_value=_TASK_CREATION_DICT)
+        with patch.object(
+            server.ToolsApi,
+            "post_tool_orca_organizations_organization_id_projects_project_id_versions_version_id_tools_orca_post",  # noqa: E501
+            mock,
+        ):
+            result = await server.run_orca_task(
+                organization_id=1,
+                project_id=10,
+                version_id=42,
+                task_input=_orca_task_input(),
+            )
+        self.assertIsInstance(result, TaskCreation)
+        self.assertEqual(result.task_id, 123)
+        kwargs = mock.await_args.kwargs
+        self.assertEqual(kwargs["organization_id"], 1)
+        self.assertEqual(kwargs["project_id"], 10)
+        self.assertEqual(kwargs["version_id"], 42)
+        sdk_input = kwargs["or_ca_input"]
+        self.assertEqual(sdk_input.name, "or-ca-test")
+        self.assertEqual(sdk_input.parameters.timeout, 30)
+        spec = sdk_input.specs_override[0].actual_instance
+        self.assertEqual(spec.relative_path, "specs/invariant.spec")
 
     async def test_get_version_comments_forwards_limit_offset(self) -> None:
         mock = AsyncMock(return_value=[_COMMENT_DICT])
