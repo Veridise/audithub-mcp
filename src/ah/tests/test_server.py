@@ -29,6 +29,8 @@ from ah_mcp.models import (  # noqa: E402
     TaskCreation,
     Thread,
     Version,
+    VersionCreation,
+    VersionFromUrlInput,
     VersionNameIndexEntry,
 )
 
@@ -81,6 +83,7 @@ _VERSION_DICT_THREE = {
     "id": 44,
     "name": "alpha",
 }
+_VERSION_CREATION_DICT = {"id": 45, "message": "Version created"}
 _TASK_DICT = {
     "id": 99,
     "tool_name": "analysis",
@@ -232,7 +235,9 @@ class TestCtxCache(unittest.TestCase):
         self.assertEqual(server._allowed_org_ids, frozenset({1, 2}))
         self.assertEqual(server._allowed_project_ids, frozenset({10, 20}))
         self.assertFalse(server._task_runs_enabled)
+        self.assertFalse(server._version_creation_enabled)
         self.assertFalse(server._is_tool_registered("run_orca_task"))
+        self.assertFalse(server._is_tool_registered("create_version_from_url"))
 
     def test_main_enables_task_runs_from_env(self) -> None:
         allow_env = {
@@ -249,6 +254,22 @@ class TestCtxCache(unittest.TestCase):
             self.assertTrue(server._is_tool_registered("run_orca_task"))
         finally:
             server._set_task_runs_enabled(False)
+
+    def test_main_enables_version_creation_from_env(self) -> None:
+        allow_env = {
+            "AH_ALLOWED_ORG_IDS": "1",
+            "AH_ALLOWED_PROJECT_IDS": "10",
+            "AH_ENABLE_VERSION_CREATION": "1",
+            **_FULL_ENV,
+        }
+        server._context = None
+        try:
+            with patch.dict(os.environ, allow_env, clear=True), patch.object(server.mcp, "run"):
+                server.main()
+            self.assertTrue(server._version_creation_enabled)
+            self.assertTrue(server._is_tool_registered("create_version_from_url"))
+        finally:
+            server._set_version_creation_enabled(False)
 
     def test_main_enables_task_runs_from_cli_flag(self) -> None:
         allow_env = {
@@ -269,6 +290,26 @@ class TestCtxCache(unittest.TestCase):
             self.assertTrue(server._is_tool_registered("run_orca_task"))
         finally:
             server._set_task_runs_enabled(False)
+
+    def test_main_enables_version_creation_from_cli_flag(self) -> None:
+        allow_env = {
+            "AH_ALLOWED_ORG_IDS": "1",
+            "AH_ALLOWED_PROJECT_IDS": "10",
+            **_FULL_ENV,
+        }
+        server._context = None
+        argv = ["ah-mcp", "--enable-version-creation"]
+        try:
+            with (
+                patch.dict(os.environ, allow_env, clear=True),
+                patch.object(sys, "argv", argv),
+                patch.object(server.mcp, "run"),
+            ):
+                server.main()
+            self.assertTrue(server._version_creation_enabled)
+            self.assertTrue(server._is_tool_registered("create_version_from_url"))
+        finally:
+            server._set_version_creation_enabled(False)
 
 
 class TestRunTool(unittest.IsolatedAsyncioTestCase):
@@ -299,12 +340,15 @@ class TestRunTool(unittest.IsolatedAsyncioTestCase):
 class TestReadOnlyToolSurface(unittest.TestCase):
     def tearDown(self) -> None:
         server._set_task_runs_enabled(False)
+        server._set_version_creation_enabled(False)
 
     def test_default_tools_start_with_get(self) -> None:
         server._set_task_runs_enabled(False)
+        server._set_version_creation_enabled(False)
         names = list(server.mcp._tool_manager._tools.keys())
         self.assertGreater(len(names), 0)
         self.assertNotIn("run_orca_task", names)
+        self.assertNotIn("create_version_from_url", names)
         for name in names:
             self.assertTrue(name.startswith("get_"))
 
@@ -313,12 +357,18 @@ class TestReadOnlyToolSurface(unittest.TestCase):
         names = list(server.mcp._tool_manager._tools.keys())
         self.assertIn("run_orca_task", names)
 
+    def test_create_version_from_url_registers_only_when_enabled(self) -> None:
+        server._set_version_creation_enabled(True)
+        names = list(server.mcp._tool_manager._tools.keys())
+        self.assertIn("create_version_from_url", names)
+
 
 class TestToolCalls(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
         server._allowed_org_ids = frozenset({1})
         server._allowed_project_ids = frozenset({10})
         server._set_task_runs_enabled(False)
+        server._set_version_creation_enabled(False)
         with patch.dict(os.environ, _FULL_ENV, clear=True):
             server._context = server._build_context()
 
@@ -327,6 +377,7 @@ class TestToolCalls(unittest.IsolatedAsyncioTestCase):
         server._allowed_org_ids = frozenset()
         server._allowed_project_ids = frozenset()
         server._set_task_runs_enabled(False)
+        server._set_version_creation_enabled(False)
 
     async def test_get_my_organizations_filters_allowlist(self) -> None:
         with patch.object(
@@ -492,6 +543,60 @@ class TestToolCalls(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sdk_input.parameters.timeout, 30)
         spec = sdk_input.specs_override[0].actual_instance
         self.assertEqual(spec.relative_path, "specs/invariant.spec")
+
+    async def test_create_version_from_url_disabled_prevents_sdk_call(self) -> None:
+        mock = AsyncMock(return_value=_VERSION_CREATION_DICT)
+        with patch.object(
+            server.VersionsApi,
+            "post_version_with_url_organizations_organization_id_projects_project_id_versions_url_post",  # noqa: E501
+            mock,
+        ), self.assertRaises(RuntimeError) as cm:
+            await server.create_version_from_url(
+                organization_id=1,
+                project_id=10,
+                version_input=VersionFromUrlInput(
+                    name="v2.0",
+                    input_type="git",
+                    url="https://github.com/acme/audit",
+                    revision="main",
+                ),
+            )
+        self.assertIn("version creation is disabled", str(cm.exception))
+        mock.assert_not_awaited()
+
+    async def test_create_version_from_url_returns_version_creation(self) -> None:
+        server._set_version_creation_enabled(True)
+        mock = AsyncMock(return_value=_VERSION_CREATION_DICT)
+        with patch.object(
+            server.VersionsApi,
+            "post_version_with_url_organizations_organization_id_projects_project_id_versions_url_post",  # noqa: E501
+            mock,
+        ):
+            result = await server.create_version_from_url(
+                organization_id=1,
+                project_id=10,
+                version_input=VersionFromUrlInput(
+                    name="v2.0",
+                    input_type="git",
+                    url="https://github.com/acme/audit",
+                    commit_hash="def456",
+                    is_deployed=True,
+                    revision="main",
+                    includes_submodules=True,
+                ),
+            )
+        self.assertIsInstance(result, VersionCreation)
+        self.assertEqual(result.id, 45)
+        kwargs = mock.await_args.kwargs
+        self.assertEqual(kwargs["organization_id"], 1)
+        self.assertEqual(kwargs["project_id"], 10)
+        self.assertEqual(kwargs["name"], "v2.0")
+        self.assertEqual(kwargs["input_type"], "git")
+        self.assertEqual(kwargs["url"], "https://github.com/acme/audit")
+        self.assertEqual(kwargs["commit_hash"], "def456")
+        self.assertTrue(kwargs["is_deployed"])
+        self.assertEqual(kwargs["revision"], "main")
+        self.assertTrue(kwargs["includes_submodules"])
 
     async def test_get_version_comments_forwards_limit_offset(self) -> None:
         mock = AsyncMock(return_value=[_COMMENT_DICT])

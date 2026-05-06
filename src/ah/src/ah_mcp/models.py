@@ -47,6 +47,29 @@ class VersionNameIndexEntry(BaseModel):
     lookup_key: str
 
 
+class VersionFromUrlInput(BaseModel):
+    """Input payload for creating an AuditHub project version from a source URL."""
+
+    model_config = ConfigDict(frozen=True)
+
+    name: Annotated[str, Field(min_length=1)]
+    input_type: Literal["archive", "git"]
+    url: Annotated[str, Field(min_length=1)]
+    commit_hash: str | None = None
+    is_deployed: bool | None = False
+    revision: str | None = None
+    includes_submodules: bool | None = None
+
+
+class VersionCreation(BaseModel):
+    """Response returned after an AuditHub version creation request."""
+
+    model_config = ConfigDict(frozen=True)
+
+    id: _PositiveId
+    message: str
+
+
 class OrCaVersionSpecReference(BaseModel):
     """OrCa V spec reference to a file inside the project version archive."""
 

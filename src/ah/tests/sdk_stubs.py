@@ -47,6 +47,11 @@ class Version(_BaseSdkModel):
     is_deployed: bool
 
 
+class IdAndMessageResponse(_BaseSdkModel):
+    id: int
+    message: str
+
+
 class Task(_BaseSdkModel):
     id: int
     tool_name: str
@@ -287,6 +292,11 @@ class VersionsApi(_ApiBase):
     ):
         raise NotImplementedError
 
+    async def post_version_with_url_organizations_organization_id_projects_project_id_versions_url_post(  # noqa: E501
+        self, **kwargs
+    ):
+        raise NotImplementedError
+
 
 class IssuesApi(_ApiBase):
     async def get_issues_organizations_organization_id_projects_project_id_issues_get(
@@ -353,6 +363,7 @@ def install_sdk_stubs() -> None:
         ("my_organization", MyOrganization),
         ("project", Project),
         ("version", Version),
+        ("id_and_message_response", IdAndMessageResponse),
         ("task", Task),
         ("task_creation", TaskCreation),
         ("fio_data", FIOData),

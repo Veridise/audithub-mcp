@@ -3,8 +3,8 @@
 Security model
 --------------
 This server is read-only by default. Read tools are named ``get_*`` and only
-invoke generated SDK methods for HTTP GET endpoints. The ``run_orca_task``
-mutation tool is registered only when task runs are explicitly enabled.
+invoke generated SDK methods for HTTP GET endpoints. Mutation tools are
+registered only when their narrow opt-in gates are explicitly enabled.
 """
 
 from __future__ import annotations
@@ -72,6 +72,8 @@ from ah_mcp.models import (
     TaskCreation,
     Thread,
     Version,
+    VersionCreation,
+    VersionFromUrlInput,
     VersionNameIndexEntry,
 )
 
@@ -99,6 +101,7 @@ _context: AuditHubSdkContext | None = None
 _allowed_org_ids: frozenset[int] = frozenset()
 _allowed_project_ids: frozenset[int] = frozenset()
 _task_runs_enabled = False
+_version_creation_enabled = False
 
 _org_ta = TypeAdapter(list[MyOrganization])
 _comment_ta = TypeAdapter(list[Comment])
@@ -109,8 +112,10 @@ _project_ta = TypeAdapter(list[Project])
 _version_ta = TypeAdapter(list[Version])
 _str_list_ta = TypeAdapter(list[str])
 _orca_task_creation_ta = TypeAdapter(TaskCreation)
+_version_creation_ta = TypeAdapter(VersionCreation)
 
 _TASK_RUN_TOOL_NAME = "run_orca_task"
+_VERSION_CREATION_TOOL_NAME = "create_version_from_url"
 _SdkOrCaSpecActual = (
     VSpecFromVersion | VSpecFromStandardLibrary | VSpecFromOrganizationLibrary | VSpecAdHoc
 )
@@ -160,12 +165,34 @@ def _set_task_runs_enabled(enabled: bool) -> None:
         mcp.remove_tool(_TASK_RUN_TOOL_NAME)
 
 
+def _set_version_creation_enabled(enabled: bool) -> None:
+    """Enable or disable opt-in version-creation MCP tools."""
+    global _version_creation_enabled
+    _version_creation_enabled = enabled
+    if enabled:
+        if not _is_tool_registered(_VERSION_CREATION_TOOL_NAME):
+            mcp.add_tool(create_version_from_url)
+        return
+    if _is_tool_registered(_VERSION_CREATION_TOOL_NAME):
+        mcp.remove_tool(_VERSION_CREATION_TOOL_NAME)
+
+
 def _assert_task_runs_enabled() -> None:
     """Raise unless mutating AuditHub task runs are enabled."""
     if not _task_runs_enabled:
         raise RuntimeError(
             "AuditHub task runs are disabled. Restart the server with "
             "--enable-task-runs or AH_ENABLE_TASK_RUNS=1 to enable run_orca_task."
+        )
+
+
+def _assert_version_creation_enabled() -> None:
+    """Raise unless mutating AuditHub version creation is enabled."""
+    if not _version_creation_enabled:
+        raise RuntimeError(
+            "AuditHub version creation is disabled. Restart the server with "
+            "--enable-version-creation or AH_ENABLE_VERSION_CREATION=1 to enable "
+            "create_version_from_url."
         )
 
 
@@ -861,6 +888,41 @@ async def run_orca_task(
     )
 
 
+async def create_version_from_url(
+    organization_id: _AhId,
+    project_id: _AhId,
+    version_input: VersionFromUrlInput,
+) -> VersionCreation:
+    """Create an AuditHub project version from a git repository or archive URL."""
+
+    async def _run() -> VersionCreation:
+        _assert_version_creation_enabled()
+        _assert_org_allowed(organization_id)
+        _assert_project_allowed(project_id)
+        created_version = await _with_api_client(
+            lambda client: VersionsApi(
+                client
+            ).post_version_with_url_organizations_organization_id_projects_project_id_versions_url_post(  # noqa: E501
+                organization_id=organization_id,
+                project_id=project_id,
+                name=version_input.name,
+                input_type=version_input.input_type,
+                url=version_input.url,
+                commit_hash=version_input.commit_hash,
+                is_deployed=version_input.is_deployed,
+                revision=version_input.revision,
+                includes_submodules=version_input.includes_submodules,
+            )
+        )
+        return _version_creation_ta.validate_python(created_version)
+
+    return await _run_tool(
+        _run,
+        tool_name=_VERSION_CREATION_TOOL_NAME,
+        safe_args={"organization_id": organization_id, "project_id": project_id},
+    )
+
+
 def main() -> None:
     """Entry point for the ``ah-mcp`` console script."""
     parser = argparse.ArgumentParser(
@@ -888,12 +950,20 @@ def main() -> None:
         action="store_true",
         help="Register opt-in mutation tools that can start AuditHub tasks.",
     )
+    parser.add_argument(
+        "--enable-version-creation",
+        action="store_true",
+        help="Register opt-in mutation tools that can create AuditHub project versions.",
+    )
     args, _ = parser.parse_known_args()
 
     org_ids_raw = args.allowed_org_ids or os.environ.get("AH_ALLOWED_ORG_IDS", "")
     proj_ids_raw = args.allowed_project_ids or os.environ.get("AH_ALLOWED_PROJECT_IDS", "")
     task_runs_enabled = args.enable_task_runs or _parse_bool_flag(
         os.environ.get("AH_ENABLE_TASK_RUNS"), "AH_ENABLE_TASK_RUNS"
+    )
+    version_creation_enabled = args.enable_version_creation or _parse_bool_flag(
+        os.environ.get("AH_ENABLE_VERSION_CREATION"), "AH_ENABLE_VERSION_CREATION"
     )
 
     if not org_ids_raw:
@@ -913,6 +983,7 @@ def main() -> None:
         proj_ids_raw, "--allowed-project-ids / AH_ALLOWED_PROJECT_IDS"
     )
     _set_task_runs_enabled(task_runs_enabled)
+    _set_version_creation_enabled(version_creation_enabled)
     _context = _build_context()
     mcp.run()
 

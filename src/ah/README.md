@@ -1,6 +1,6 @@
 # ah-mcp
 
-MCP server for [AuditHub](https://audithub.veridise.com). By default it exposes read-only AuditHub data (organizations, projects, versions, issues, comments, tasks). It can also expose an opt-in `run_orca_task` mutation tool for starting OrCa tasks.
+MCP server for [AuditHub](https://audithub.veridise.com). By default it exposes read-only AuditHub data (organizations, projects, versions, issues, comments, tasks). It can also expose opt-in mutation tools for starting OrCa tasks and creating project versions.
 
 > **Warning:** This server is currently under-developed and has not been tested. Verify all tool outputs manually before acting on them.
 
@@ -62,8 +62,9 @@ All credentials are read from environment variables and passed into the SDK auth
 | `AH_ALLOWED_ORG_IDS` | Yes | Comma-separated list of numeric organization IDs the server may access, e.g. `"1,2,3"` |
 | `AH_ALLOWED_PROJECT_IDS` | Yes | Comma-separated list of numeric project IDs the server may access, e.g. `"10,20"` |
 | `AH_ENABLE_TASK_RUNS` | No | Set to `1` to register the opt-in `run_orca_task` mutation tool |
+| `AH_ENABLE_VERSION_CREATION` | No | Set to `1` to register the opt-in `create_version_from_url` mutation tool |
 
-CLI flags `--allowed-org-ids` and `--allowed-project-ids` override the corresponding environment variables when both are supplied. Use `--enable-task-runs` to register `run_orca_task` without setting `AH_ENABLE_TASK_RUNS`.
+CLI flags `--allowed-org-ids` and `--allowed-project-ids` override the corresponding environment variables when both are supplied. Use `--enable-task-runs` to register `run_orca_task` without setting `AH_ENABLE_TASK_RUNS`, or `--enable-version-creation` to register `create_version_from_url` without setting `AH_ENABLE_VERSION_CREATION`.
 
 ## Running the server
 
@@ -119,6 +120,7 @@ credentials and allowlist IDs; no secrets belong in the agent config file.
 | `get_project_issue` | Get a specific issue from a project |
 | `get_project_comments` | Get all comments for a project across all versions |
 | `run_orca_task` | Start an OrCa task for a project version; registered only when task runs are explicitly enabled |
+| `create_version_from_url` | Create a project version from a git repository or archive URL; registered only when version creation is explicitly enabled |
 
 All tools return typed Python objects backed by `audithub-sdk` models. On error, tools raise `RuntimeError` with a sanitized plain-text message; the MCP protocol surfaces this as an error response to the caller.
 
@@ -131,6 +133,7 @@ ID-based tools.
 
 - **Read-only by default.** Default tools are named `get_*` and only invoke generated `audithub-sdk` GET endpoints.
 - **Opt-in OrCa task execution.** The `run_orca_task` mutation tool is registered only when `AH_ENABLE_TASK_RUNS=1` or `--enable-task-runs` is supplied. It calls the generated OrCa POST endpoint through `audithub-sdk`.
+- **Opt-in version creation.** The `create_version_from_url` mutation tool is registered only when `AH_ENABLE_VERSION_CREATION=1` or `--enable-version-creation` is supplied. It calls the generated project version URL POST endpoint through `audithub-sdk`.
 - **Credential isolation.** OIDC credentials are read from the environment once at startup and passed into `audithub_sdk_ext.AuthenticatedApiClient`. They are never accepted as tool arguments and are not surfaced in tool outputs or sanitized error messages.
 - **ID allowlisting.** The server refuses to access any organization or project whose numeric ID was not explicitly included in `AH_ALLOWED_ORG_IDS` / `AH_ALLOWED_PROJECT_IDS`. The check runs before any network request.
 - **SDK-only transport.** All AuditHub interaction flows through `audithub-sdk` and `audithub_sdk_ext`; there is no raw HTTP helper in the MCP server.
