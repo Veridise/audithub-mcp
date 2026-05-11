@@ -76,6 +76,7 @@ from ah_mcp.models import (
     Thread,
     Version,
     VersionCreation,
+    VersionFromArchiveInput,
     VersionFromUrlInput,
     VersionNameIndexEntry,
 )
@@ -122,7 +123,10 @@ _version_creation_ta = TypeAdapter(VersionCreation)
 _DEFAULT_ARTIFACT_MAX_BYTES = 5 * 1024 * 1024
 
 _TASK_RUN_TOOL_NAME = "run_orca_task"
-_VERSION_CREATION_TOOL_NAME = "create_version_from_url"
+_VERSION_CREATION_TOOL_NAMES = (
+    "create_version_from_archive",
+    "create_version_from_url",
+)
 _SdkOrCaSpecActual = (
     VSpecFromVersion | VSpecFromStandardLibrary | VSpecFromOrganizationLibrary | VSpecAdHoc
 )
@@ -177,11 +181,14 @@ def _set_version_creation_enabled(enabled: bool) -> None:
     global _version_creation_enabled
     _version_creation_enabled = enabled
     if enabled:
-        if not _is_tool_registered(_VERSION_CREATION_TOOL_NAME):
+        if not _is_tool_registered(_VERSION_CREATION_TOOL_NAMES[0]):
+            mcp.add_tool(create_version_from_archive)
+        if not _is_tool_registered(_VERSION_CREATION_TOOL_NAMES[1]):
             mcp.add_tool(create_version_from_url)
         return
-    if _is_tool_registered(_VERSION_CREATION_TOOL_NAME):
-        mcp.remove_tool(_VERSION_CREATION_TOOL_NAME)
+    for tool_name in _VERSION_CREATION_TOOL_NAMES:
+        if _is_tool_registered(tool_name):
+            mcp.remove_tool(tool_name)
 
 
 def _assert_task_runs_enabled() -> None:
@@ -199,7 +206,7 @@ def _assert_version_creation_enabled() -> None:
         raise RuntimeError(
             "AuditHub version creation is disabled. Restart the server with "
             "--enable-version-creation or AH_ENABLE_VERSION_CREATION=1 to enable "
-            "create_version_from_url."
+            "create_version_from_archive and create_version_from_url."
         )
 
 
@@ -1016,9 +1023,81 @@ async def create_version_from_url(
 
     return await _run_tool(
         _run,
-        tool_name=_VERSION_CREATION_TOOL_NAME,
+        tool_name=_VERSION_CREATION_TOOL_NAMES[1],
         safe_args={"organization_id": organization_id, "project_id": project_id},
     )
+
+
+async def create_version_from_archive(
+    organization_id: _AhId,
+    project_id: _AhId,
+    version_input: VersionFromArchiveInput,
+) -> VersionCreation:
+    """Create an AuditHub project version by uploading a local .zip archive."""
+
+    async def _run() -> VersionCreation:
+        _assert_version_creation_enabled()
+        _assert_org_allowed(organization_id)
+        _assert_project_allowed(project_id)
+        created_version = await _with_api_client(
+            lambda client: _create_version_from_archive_with_client(
+                client,
+                organization_id=organization_id,
+                project_id=project_id,
+                version_input=version_input,
+            )
+        )
+        return _version_creation_ta.validate_python(created_version)
+
+    return await _run_tool(
+        _run,
+        tool_name=_VERSION_CREATION_TOOL_NAMES[0],
+        safe_args={"organization_id": organization_id, "project_id": project_id},
+    )
+
+
+async def _create_version_from_archive_with_client(
+    client: AuthenticatedApiClient,
+    *,
+    organization_id: int,
+    project_id: int,
+    version_input: VersionFromArchiveInput,
+) -> VersionCreation:
+    """Create a version by sending the .zip archive as multipart upload data."""
+    method, url, headers, body, post_params = client.param_serialize(
+        method="POST",
+        resource_path="/organizations/{organization_id}/projects/{project_id}/versions",
+        path_params={"organization_id": organization_id, "project_id": project_id},
+        query_params=None,
+        header_params={
+            "Accept": "application/json",
+            "Content-Type": "multipart/form-data",
+        },
+        body=None,
+        post_params=[
+            ("name", version_input.name),
+            *(
+                [("commit_hash", version_input.commit_hash)]
+                if version_input.commit_hash is not None
+                else []
+            ),
+            *(
+                [("is_deployed", version_input.is_deployed)]
+                if version_input.is_deployed is not None
+                else []
+            ),
+        ],
+        files={"archive": version_input.archive},
+        auth_settings=["OpenIdConnect"],
+        collection_formats={},
+    )
+    response_data = await client.call_api(method, url, headers, body, post_params)
+    await response_data.read()
+    created_version = client.response_deserialize(
+        response_data=response_data,
+        response_types_map={"200": "IdAndMessageResponse"},
+    ).data
+    return _version_creation_ta.validate_python(created_version.model_dump())
 
 
 def main() -> None:

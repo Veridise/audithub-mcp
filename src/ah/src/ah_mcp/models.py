@@ -61,6 +61,17 @@ class VersionFromUrlInput(BaseModel):
     includes_submodules: bool | None = None
 
 
+class VersionFromArchiveInput(BaseModel):
+    """Input payload for creating an AuditHub project version from a .zip archive."""
+
+    model_config = ConfigDict(frozen=True)
+
+    name: Annotated[str, Field(min_length=1)]
+    archive: Annotated[str, Field(min_length=1)]
+    commit_hash: str | None = None
+    is_deployed: bool | None = False
+
+
 class VersionCreation(BaseModel):
     """Response returned after an AuditHub version creation request."""
 
@@ -258,5 +269,6 @@ __all__ = [
     "TaskCreation",
     "Thread",
     "Version",
+    "VersionFromArchiveInput",
     "VersionNameIndexEntry",
 ]
