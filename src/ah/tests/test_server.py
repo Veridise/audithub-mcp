@@ -8,6 +8,8 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
+from pydantic import ValidationError
+
 from tests.sdk_stubs import install_sdk_stubs
 
 install_sdk_stubs()
@@ -224,6 +226,29 @@ class TestBuildContext(unittest.TestCase):
         self.assertEqual(
             ctx.auth_context.oidc_configuration_url, _FULL_ENV["AUDITHUB_OIDC_CONFIGURATION_URL"]
         )
+
+    def test_orca_task_input_enables_on_chain_when_deployment_info_is_provided(self) -> None:
+        task_input = OrCaTaskInput(
+            specs_override=[OrCaVersionSpecReference(relative_path="specs/invariant.spec")],
+            deployment_info_file="orca/onchain.deployment.json",
+        )
+        self.assertTrue(task_input.on_chain)
+
+    def test_orca_task_input_requires_deployment_info_for_on_chain(self) -> None:
+        with self.assertRaises(ValidationError) as cm:
+            OrCaTaskInput(
+                specs_override=[OrCaVersionSpecReference(relative_path="specs/invariant.spec")],
+                on_chain=True,
+            )
+        self.assertIn("deployment_info_file", str(cm.exception))
+
+    def test_orca_task_input_rejects_non_deployment_json_files(self) -> None:
+        with self.assertRaises(ValidationError) as cm:
+            OrCaTaskInput(
+                specs_override=[OrCaVersionSpecReference(relative_path="specs/invariant.spec")],
+                deployment_info_file="orca/onchain.json",
+            )
+        self.assertIn(".deployment.json", str(cm.exception))
 
     def test_secret_not_in_error_message(self) -> None:
         env = {"AUDITHUB_OIDC_CLIENT_SECRET": "SUPER_SECRET_VALUE"}

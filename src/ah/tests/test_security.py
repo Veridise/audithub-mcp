@@ -220,8 +220,8 @@ class TestDisallowedIds(unittest.IsolatedAsyncioTestCase):
         server._set_version_creation_enabled(True)
         mock = AsyncMock(return_value={"id": 1, "message": "created"})
         with patch.object(
-            server.VersionsApi,
-            "post_version_organizations_organization_id_projects_project_id_versions_post",
+            server,
+            "_create_version_from_archive_with_client",
             mock,
         ), self.assertRaises(RuntimeError) as cm:
             await server.create_version_from_archive(
@@ -240,8 +240,8 @@ class TestDisallowedIds(unittest.IsolatedAsyncioTestCase):
         server._set_version_creation_enabled(True)
         mock = AsyncMock(return_value={"id": 1, "message": "created"})
         with patch.object(
-            server.VersionsApi,
-            "post_version_organizations_organization_id_projects_project_id_versions_post",
+            server,
+            "_create_version_from_archive_with_client",
             mock,
         ), self.assertRaises(RuntimeError) as cm:
             await server.create_version_from_archive(
