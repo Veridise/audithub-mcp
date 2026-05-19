@@ -136,6 +136,7 @@ ID-based tools.
 
 - **Read-only by default.** Default tools are named `get_*` and only invoke generated `audithub-sdk` GET endpoints.
 - **Opt-in OrCa task execution.** The `run_orca_task` mutation tool is registered only when `AH_ENABLE_TASK_RUNS=1` or `--enable-task-runs` is supplied. It calls the generated OrCa POST endpoint through `audithub-sdk`.
+- **On-chain OrCa mode.** When launching OrCa against already deployed contracts, pass `deployment_info_file` as a path ending in `.deployment.json`. The server normalizes that into `on_chain=True` and rejects mismatched paths early so callers do not accidentally launch a local Foundry-style run.
 - **Opt-in version creation.** The `create_version_from_url` mutation tool is registered only when `AH_ENABLE_VERSION_CREATION=1` or `--enable-version-creation` is supplied. It calls the generated project version URL POST endpoint through `audithub-sdk`.
 - **Credential isolation.** OIDC credentials are read from the environment once at startup and passed into `audithub_sdk_ext.AuthenticatedApiClient`. They are never accepted as tool arguments and are not surfaced in tool outputs or sanitized error messages.
 - **ID allowlisting.** The server refuses to access any organization or project whose numeric ID was not explicitly included in `AH_ALLOWED_ORG_IDS` / `AH_ALLOWED_PROJECT_IDS`. The check runs before any network request.
