@@ -307,6 +307,11 @@ class VersionsApi(_ApiBase):
     ):
         raise NotImplementedError
 
+    async def post_version_organizations_organization_id_projects_project_id_versions_post(
+        self, **kwargs
+    ):
+        raise NotImplementedError
+
 
 class IssuesApi(_ApiBase):
     async def get_issues_organizations_organization_id_projects_project_id_issues_get(
