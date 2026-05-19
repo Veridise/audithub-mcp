@@ -52,6 +52,15 @@ class IdAndMessageResponse(_BaseSdkModel):
     message: str
 
 
+class Artifact(_BaseSdkModel):
+    name: str
+    step_code: str
+    mime_type: str
+    is_fio: bool
+    id: str
+    presigned_url: str | None = None
+
+
 class Task(_BaseSdkModel):
     id: int
     tool_name: str
@@ -59,6 +68,7 @@ class Task(_BaseSdkModel):
     version_id: int
     status: str
     created_at: datetime
+    artifacts: list[Artifact] | None = None
 
 
 class TaskCreation(_BaseSdkModel):
@@ -297,6 +307,11 @@ class VersionsApi(_ApiBase):
     ):
         raise NotImplementedError
 
+    async def post_version_organizations_organization_id_projects_project_id_versions_post(
+        self, **kwargs
+    ):
+        raise NotImplementedError
+
 
 class IssuesApi(_ApiBase):
     async def get_issues_organizations_organization_id_projects_project_id_issues_get(
@@ -312,6 +327,11 @@ class IssuesApi(_ApiBase):
 
 class TasksApi(_ApiBase):
     async def get_info_organizations_organization_id_tasks_task_id_get(self, **kwargs):
+        raise NotImplementedError
+
+    async def get_artifact_organizations_organization_id_tasks_task_id_artifacts_artifact_id_get_with_http_info(  # noqa: E501
+        self, **kwargs
+    ):
         raise NotImplementedError
 
     async def get_task_findings_organizations_organization_id_tasks_task_id_findings_get(
@@ -364,6 +384,7 @@ def install_sdk_stubs() -> None:
         ("project", Project),
         ("version", Version),
         ("id_and_message_response", IdAndMessageResponse),
+        ("artifact", Artifact),
         ("task", Task),
         ("task_creation", TaskCreation),
         ("fio_data", FIOData),

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import unittest
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from tests.sdk_stubs import install_sdk_stubs
@@ -15,6 +16,7 @@ from ah_mcp.models import (  # noqa: E402
     OrCaAdHocSpecReference,
     OrCaParametersInput,
     OrCaTaskInput,
+    VersionFromArchiveInput,
     VersionFromUrlInput,
 )
 
@@ -77,6 +79,46 @@ class TestDisallowedIds(unittest.IsolatedAsyncioTestCase):
             mock,
         ), self.assertRaises(RuntimeError):
             await server.get_task_findings(organization_id=999, task_id=10)
+        mock.assert_not_awaited()
+
+    async def test_task_artifacts_disallowed_org(self) -> None:
+        with self.assertRaises(RuntimeError) as cm:
+            await server.get_task_artifacts(organization_id=999, task_id=10)
+        self.assertIn("999", str(cm.exception))
+        self.assertNotIn("frozenset", str(cm.exception))
+
+    async def test_task_artifacts_rejected_call_does_not_reach_sdk(self) -> None:
+        mock = AsyncMock(return_value=[])
+        with patch.object(
+            server.TasksApi,
+            "get_info_organizations_organization_id_tasks_task_id_get",
+            mock,
+        ), self.assertRaises(RuntimeError):
+            await server.get_task_artifacts(organization_id=999, task_id=10)
+        mock.assert_not_awaited()
+
+    async def test_task_artifact_disallowed_org(self) -> None:
+        with self.assertRaises(RuntimeError) as cm:
+            await server.get_task_artifact(
+                organization_id=999,
+                task_id=10,
+                artifact_id="artifact-1",
+            )
+        self.assertIn("999", str(cm.exception))
+        self.assertNotIn("frozenset", str(cm.exception))
+
+    async def test_task_artifact_rejected_call_does_not_reach_sdk(self) -> None:
+        mock = AsyncMock(return_value=SimpleNamespace(raw_data=b"", headers={}))
+        with patch.object(
+            server.TasksApi,
+            "get_artifact_organizations_organization_id_tasks_task_id_artifacts_artifact_id_get_with_http_info",  # noqa: E501
+            mock,
+        ), self.assertRaises(RuntimeError):
+            await server.get_task_artifact(
+                organization_id=999,
+                task_id=10,
+                artifact_id="artifact-1",
+            )
         mock.assert_not_awaited()
 
     async def test_project_name_index_disallowed_org(self) -> None:
@@ -174,6 +216,46 @@ class TestDisallowedIds(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("frozenset", str(cm.exception))
         mock.assert_not_awaited()
 
+    async def test_create_version_archive_disallowed_org_rejected_before_sdk_call(self) -> None:
+        server._set_version_creation_enabled(True)
+        mock = AsyncMock(return_value={"id": 1, "message": "created"})
+        with patch.object(
+            server,
+            "_create_version_from_archive_with_client",
+            mock,
+        ), self.assertRaises(RuntimeError) as cm:
+            await server.create_version_from_archive(
+                organization_id=999,
+                project_id=10,
+                version_input=VersionFromArchiveInput(
+                    name="v2.0",
+                    archive="ARCHIVE_CONTENTS",
+                ),
+            )
+        self.assertIn("999", str(cm.exception))
+        self.assertNotIn("frozenset", str(cm.exception))
+        mock.assert_not_awaited()
+
+    async def test_create_version_archive_disallowed_project_rejected_before_sdk_call(self) -> None:
+        server._set_version_creation_enabled(True)
+        mock = AsyncMock(return_value={"id": 1, "message": "created"})
+        with patch.object(
+            server,
+            "_create_version_from_archive_with_client",
+            mock,
+        ), self.assertRaises(RuntimeError) as cm:
+            await server.create_version_from_archive(
+                organization_id=1,
+                project_id=999,
+                version_input=VersionFromArchiveInput(
+                    name="v2.0",
+                    archive="ARCHIVE_CONTENTS",
+                ),
+            )
+        self.assertIn("999", str(cm.exception))
+        self.assertNotIn("frozenset", str(cm.exception))
+        mock.assert_not_awaited()
+
     async def test_create_version_disallowed_project_rejected_before_sdk_call(self) -> None:
         server._set_version_creation_enabled(True)
         mock = AsyncMock(return_value={"id": 1, "message": "created"})
@@ -226,6 +308,42 @@ class TestStepCodePrivacy(unittest.IsolatedAsyncioTestCase):
         for call in mock_info.call_args_list:
             args = " ".join(str(arg) for arg in call.args)
             self.assertNotIn(step_code, args)
+
+
+class TestArtifactPrivacy(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self) -> None:
+        server._allowed_org_ids = frozenset({1})
+        server._context = server.AuditHubSdkContext(
+            configuration=server.audithub_sdk.Configuration(host="https://example.com/api/v1"),
+            auth_context=server.OIDCClientCredentialsContext(
+                oidc_configuration_url="https://issuer/.well-known/openid-configuration",
+                client_id="client-id",
+                client_secret="client-secret",
+            ),
+        )
+
+    async def asyncTearDown(self) -> None:
+        server._allowed_org_ids = frozenset()
+        server._context = None
+
+    async def test_artifact_id_not_in_audit_log(self) -> None:
+        import ah_mcp.audit as audit_mod
+
+        artifact_id = "SECRET_ARTIFACT_ID"
+        response = SimpleNamespace(raw_data=b"artifact", headers={"content-type": "text/plain"})
+        with patch.object(
+            server.TasksApi,
+            "get_artifact_organizations_organization_id_tasks_task_id_artifacts_artifact_id_get_with_http_info",  # noqa: E501
+            AsyncMock(return_value=response),
+        ), patch.object(audit_mod.logger, "info") as mock_info:
+            await server.get_task_artifact(
+                organization_id=1,
+                task_id=1,
+                artifact_id=artifact_id,
+            )
+        for call in mock_info.call_args_list:
+            args = " ".join(str(arg) for arg in call.args)
+            self.assertNotIn(artifact_id, args)
 
 
 class TestOrCaTaskPrivacy(unittest.IsolatedAsyncioTestCase):
@@ -330,6 +448,27 @@ class TestVersionCreationPrivacy(unittest.IsolatedAsyncioTestCase):
             args = " ".join(str(arg) for arg in call.args)
             self.assertNotIn(url, args)
             self.assertNotIn("SECRET_URL_TOKEN", args)
+
+    async def test_version_archive_not_in_audit_log(self) -> None:
+        import ah_mcp.audit as audit_mod
+
+        archive = "SECRET_ARCHIVE_CONTENTS"
+        with patch.object(
+            server,
+            "_create_version_from_archive_with_client",
+            AsyncMock(return_value={"id": 1, "message": "created"}),
+        ), patch.object(audit_mod.logger, "info") as mock_info:
+            await server.create_version_from_archive(
+                organization_id=1,
+                project_id=10,
+                version_input=VersionFromArchiveInput(
+                    name="secret-version",
+                    archive=archive,
+                ),
+            )
+        for call in mock_info.call_args_list:
+            args = " ".join(str(arg) for arg in call.args)
+            self.assertNotIn(archive, args)
 
 
 class TestErrorSanitization(unittest.IsolatedAsyncioTestCase):
