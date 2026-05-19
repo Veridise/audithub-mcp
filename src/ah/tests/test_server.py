@@ -5,7 +5,10 @@ from __future__ import annotations
 import os
 import sys
 import unittest
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
+
+from pydantic import ValidationError
 
 from tests.sdk_stubs import install_sdk_stubs
 
@@ -26,9 +29,14 @@ from ah_mcp.models import (  # noqa: E402
     Project,
     ProjectNameIndexEntry,
     Task,
+    TaskArtifact,
+    TaskArtifactContent,
     TaskCreation,
     Thread,
     Version,
+    VersionCreation,
+    VersionFromArchiveInput,
+    VersionFromUrlInput,
     VersionNameIndexEntry,
 )
 
@@ -81,6 +89,7 @@ _VERSION_DICT_THREE = {
     "id": 44,
     "name": "alpha",
 }
+_VERSION_CREATION_DICT = {"id": 45, "message": "Version created"}
 _TASK_DICT = {
     "id": 99,
     "tool_name": "analysis",
@@ -88,6 +97,18 @@ _TASK_DICT = {
     "version_id": 42,
     "status": "Finished",
     "created_at": _TIMESTAMP,
+}
+_ARTIFACT_DICT = {
+    "id": "artifact-1",
+    "name": "reports/result.json",
+    "step_code": "analysis",
+    "mime_type": "application/json",
+    "is_fio": False,
+    "presigned_url": "https://example.com/private?token=SECRET",
+}
+_TASK_WITH_ARTIFACTS_DICT = {
+    **_TASK_DICT,
+    "artifacts": [_ARTIFACT_DICT],
 }
 _TASK_CREATION_DICT = {
     "task_id": 123,
@@ -206,6 +227,29 @@ class TestBuildContext(unittest.TestCase):
             ctx.auth_context.oidc_configuration_url, _FULL_ENV["AUDITHUB_OIDC_CONFIGURATION_URL"]
         )
 
+    def test_orca_task_input_enables_on_chain_when_deployment_info_is_provided(self) -> None:
+        task_input = OrCaTaskInput(
+            specs_override=[OrCaVersionSpecReference(relative_path="specs/invariant.spec")],
+            deployment_info_file="orca/onchain.deployment.json",
+        )
+        self.assertTrue(task_input.on_chain)
+
+    def test_orca_task_input_requires_deployment_info_for_on_chain(self) -> None:
+        with self.assertRaises(ValidationError) as cm:
+            OrCaTaskInput(
+                specs_override=[OrCaVersionSpecReference(relative_path="specs/invariant.spec")],
+                on_chain=True,
+            )
+        self.assertIn("deployment_info_file", str(cm.exception))
+
+    def test_orca_task_input_rejects_non_deployment_json_files(self) -> None:
+        with self.assertRaises(ValidationError) as cm:
+            OrCaTaskInput(
+                specs_override=[OrCaVersionSpecReference(relative_path="specs/invariant.spec")],
+                deployment_info_file="orca/onchain.json",
+            )
+        self.assertIn(".deployment.json", str(cm.exception))
+
     def test_secret_not_in_error_message(self) -> None:
         env = {"AUDITHUB_OIDC_CLIENT_SECRET": "SUPER_SECRET_VALUE"}
         with patch.dict(os.environ, env, clear=True), self.assertRaises(RuntimeError) as cm:
@@ -232,7 +276,10 @@ class TestCtxCache(unittest.TestCase):
         self.assertEqual(server._allowed_org_ids, frozenset({1, 2}))
         self.assertEqual(server._allowed_project_ids, frozenset({10, 20}))
         self.assertFalse(server._task_runs_enabled)
+        self.assertFalse(server._version_creation_enabled)
         self.assertFalse(server._is_tool_registered("run_orca_task"))
+        self.assertFalse(server._is_tool_registered("create_version_from_archive"))
+        self.assertFalse(server._is_tool_registered("create_version_from_url"))
 
     def test_main_enables_task_runs_from_env(self) -> None:
         allow_env = {
@@ -249,6 +296,23 @@ class TestCtxCache(unittest.TestCase):
             self.assertTrue(server._is_tool_registered("run_orca_task"))
         finally:
             server._set_task_runs_enabled(False)
+
+    def test_main_enables_version_creation_from_env(self) -> None:
+        allow_env = {
+            "AH_ALLOWED_ORG_IDS": "1",
+            "AH_ALLOWED_PROJECT_IDS": "10",
+            "AH_ENABLE_VERSION_CREATION": "1",
+            **_FULL_ENV,
+        }
+        server._context = None
+        try:
+            with patch.dict(os.environ, allow_env, clear=True), patch.object(server.mcp, "run"):
+                server.main()
+            self.assertTrue(server._version_creation_enabled)
+            self.assertTrue(server._is_tool_registered("create_version_from_archive"))
+            self.assertTrue(server._is_tool_registered("create_version_from_url"))
+        finally:
+            server._set_version_creation_enabled(False)
 
     def test_main_enables_task_runs_from_cli_flag(self) -> None:
         allow_env = {
@@ -269,6 +333,27 @@ class TestCtxCache(unittest.TestCase):
             self.assertTrue(server._is_tool_registered("run_orca_task"))
         finally:
             server._set_task_runs_enabled(False)
+
+    def test_main_enables_version_creation_from_cli_flag(self) -> None:
+        allow_env = {
+            "AH_ALLOWED_ORG_IDS": "1",
+            "AH_ALLOWED_PROJECT_IDS": "10",
+            **_FULL_ENV,
+        }
+        server._context = None
+        argv = ["ah-mcp", "--enable-version-creation"]
+        try:
+            with (
+                patch.dict(os.environ, allow_env, clear=True),
+                patch.object(sys, "argv", argv),
+                patch.object(server.mcp, "run"),
+            ):
+                server.main()
+            self.assertTrue(server._version_creation_enabled)
+            self.assertTrue(server._is_tool_registered("create_version_from_archive"))
+            self.assertTrue(server._is_tool_registered("create_version_from_url"))
+        finally:
+            server._set_version_creation_enabled(False)
 
 
 class TestRunTool(unittest.IsolatedAsyncioTestCase):
@@ -299,12 +384,16 @@ class TestRunTool(unittest.IsolatedAsyncioTestCase):
 class TestReadOnlyToolSurface(unittest.TestCase):
     def tearDown(self) -> None:
         server._set_task_runs_enabled(False)
+        server._set_version_creation_enabled(False)
 
     def test_default_tools_start_with_get(self) -> None:
         server._set_task_runs_enabled(False)
+        server._set_version_creation_enabled(False)
         names = list(server.mcp._tool_manager._tools.keys())
         self.assertGreater(len(names), 0)
         self.assertNotIn("run_orca_task", names)
+        self.assertNotIn("create_version_from_archive", names)
+        self.assertNotIn("create_version_from_url", names)
         for name in names:
             self.assertTrue(name.startswith("get_"))
 
@@ -313,12 +402,23 @@ class TestReadOnlyToolSurface(unittest.TestCase):
         names = list(server.mcp._tool_manager._tools.keys())
         self.assertIn("run_orca_task", names)
 
+    def test_create_version_from_archive_registers_only_when_enabled(self) -> None:
+        server._set_version_creation_enabled(True)
+        names = list(server.mcp._tool_manager._tools.keys())
+        self.assertIn("create_version_from_archive", names)
+
+    def test_create_version_from_url_registers_only_when_enabled(self) -> None:
+        server._set_version_creation_enabled(True)
+        names = list(server.mcp._tool_manager._tools.keys())
+        self.assertIn("create_version_from_url", names)
+
 
 class TestToolCalls(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
         server._allowed_org_ids = frozenset({1})
         server._allowed_project_ids = frozenset({10})
         server._set_task_runs_enabled(False)
+        server._set_version_creation_enabled(False)
         with patch.dict(os.environ, _FULL_ENV, clear=True):
             server._context = server._build_context()
 
@@ -327,6 +427,7 @@ class TestToolCalls(unittest.IsolatedAsyncioTestCase):
         server._allowed_org_ids = frozenset()
         server._allowed_project_ids = frozenset()
         server._set_task_runs_enabled(False)
+        server._set_version_creation_enabled(False)
 
     async def test_get_my_organizations_filters_allowlist(self) -> None:
         with patch.object(
@@ -432,6 +533,67 @@ class TestToolCalls(unittest.IsolatedAsyncioTestCase):
             result = await server.get_task_info(organization_id=1, task_id=99)
         self.assertIsInstance(result, Task)
 
+    async def test_get_task_info_sanitizes_artifact_presigned_urls(self) -> None:
+        with patch.object(
+            server.TasksApi,
+            "get_info_organizations_organization_id_tasks_task_id_get",
+            AsyncMock(return_value=_TASK_WITH_ARTIFACTS_DICT),
+        ):
+            result = await server.get_task_info(organization_id=1, task_id=99)
+        self.assertIsNotNone(result.artifacts)
+        assert result.artifacts is not None
+        self.assertIsNone(result.artifacts[0].presigned_url)
+
+    async def test_get_task_artifacts_returns_sanitized_metadata(self) -> None:
+        with patch.object(
+            server.TasksApi,
+            "get_info_organizations_organization_id_tasks_task_id_get",
+            AsyncMock(return_value=_TASK_WITH_ARTIFACTS_DICT),
+        ):
+            result = await server.get_task_artifacts(organization_id=1, task_id=99)
+        self.assertEqual(len(result), 1)
+        self.assertIsInstance(result[0], TaskArtifact)
+        self.assertEqual(result[0].id, "artifact-1")
+        self.assertFalse(hasattr(result[0], "presigned_url"))
+
+    async def test_get_task_artifact_returns_base64_content(self) -> None:
+        response = SimpleNamespace(
+            raw_data=b'{"ok": true}',
+            headers={"content-type": "application/json"},
+        )
+        with patch.object(
+            server.TasksApi,
+            "get_artifact_organizations_organization_id_tasks_task_id_artifacts_artifact_id_get_with_http_info",  # noqa: E501
+            AsyncMock(return_value=response),
+        ) as mock_get:
+            result = await server.get_task_artifact(
+                organization_id=1,
+                task_id=99,
+                artifact_id="artifact-1",
+            )
+        self.assertIsInstance(result, TaskArtifactContent)
+        self.assertEqual(result.artifact_id, "artifact-1")
+        self.assertEqual(result.content_type, "application/json")
+        self.assertEqual(result.content_length, 12)
+        self.assertEqual(result.content_base64, "eyJvayI6IHRydWV9")
+        self.assertEqual(result.content_encoding, "base64")
+        self.assertEqual(mock_get.await_args.kwargs["artifact_id"], "artifact-1")
+
+    async def test_get_task_artifact_rejects_oversized_content(self) -> None:
+        response = SimpleNamespace(raw_data=b"abcd", headers={})
+        with patch.object(
+            server.TasksApi,
+            "get_artifact_organizations_organization_id_tasks_task_id_artifacts_artifact_id_get_with_http_info",  # noqa: E501
+            AsyncMock(return_value=response),
+        ), self.assertRaises(RuntimeError) as cm:
+            await server.get_task_artifact(
+                organization_id=1,
+                task_id=99,
+                artifact_id="artifact-1",
+                max_bytes=3,
+            )
+        self.assertIn("exceeding max_bytes=3", str(cm.exception))
+
     async def test_get_task_logs_returns_list(self) -> None:
         with patch.object(
             server.TasksApi,
@@ -492,6 +654,153 @@ class TestToolCalls(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sdk_input.parameters.timeout, 30)
         spec = sdk_input.specs_override[0].actual_instance
         self.assertEqual(spec.relative_path, "specs/invariant.spec")
+
+    async def test_create_version_from_url_disabled_prevents_sdk_call(self) -> None:
+        mock = AsyncMock(return_value=_VERSION_CREATION_DICT)
+        with patch.object(
+            server.VersionsApi,
+            "post_version_with_url_organizations_organization_id_projects_project_id_versions_url_post",  # noqa: E501
+            mock,
+        ), self.assertRaises(RuntimeError) as cm:
+            await server.create_version_from_url(
+                organization_id=1,
+                project_id=10,
+                version_input=VersionFromUrlInput(
+                    name="v2.0",
+                    input_type="git",
+                    url="https://github.com/acme/audit",
+                    revision="main",
+                ),
+            )
+        self.assertIn("version creation is disabled", str(cm.exception))
+        mock.assert_not_awaited()
+
+    async def test_create_version_from_archive_disabled_prevents_sdk_call(self) -> None:
+        mock = AsyncMock(return_value=_VERSION_CREATION_DICT)
+        with patch.object(
+            server,
+            "_create_version_from_archive_with_client",
+            mock,
+        ), self.assertRaises(RuntimeError) as cm:
+            await server.create_version_from_archive(
+                organization_id=1,
+                project_id=10,
+                version_input=VersionFromArchiveInput(
+                    name="v2.0",
+                    archive="ARCHIVE_CONTENTS",
+                    commit_hash="def456",
+                ),
+            )
+        self.assertIn("version creation is disabled", str(cm.exception))
+        mock.assert_not_awaited()
+
+    async def test_create_version_from_archive_uses_multipart_upload(self) -> None:
+        server._set_version_creation_enabled(True)
+
+        class _FakeResponse:
+            status = 200
+            headers: dict[str, str] = {}
+            data = b'{"id":45,"message":"Version created"}'
+
+            async def read(self) -> None:
+                return None
+
+        class _FakeClient:
+            def __init__(self) -> None:
+                self.param_serialize_kwargs: dict[str, object] | None = None
+                self.call_api_args: tuple[object, ...] | None = None
+                self.response_deserialize_args: tuple[object, ...] | None = None
+
+            class _FakeVersionResponse:
+                def model_dump(self) -> dict[str, object]:
+                    return _VERSION_CREATION_DICT
+
+            def param_serialize(self, **kwargs: object) -> tuple[object, ...]:
+                self.param_serialize_kwargs = kwargs
+                return ("POST", "https://example.invalid", {}, None, [])
+
+            async def call_api(self, *args: object) -> _FakeResponse:
+                self.call_api_args = args
+                return _FakeResponse()
+
+            def response_deserialize(
+                self,
+                response_data: _FakeResponse,
+                response_types_map: dict[str, str],
+            ) -> SimpleNamespace:
+                self.response_deserialize_args = (response_data, response_types_map)
+                return SimpleNamespace(data=self._FakeVersionResponse())
+
+        client = _FakeClient()
+        result = await server._create_version_from_archive_with_client(
+            client,
+            organization_id=1,
+            project_id=10,
+            version_input=VersionFromArchiveInput(
+                name="v2.0",
+                archive="/tmp/archive.zip",
+                commit_hash="def456",
+                is_deployed=True,
+            ),
+        )
+        self.assertIsInstance(result, VersionCreation)
+        self.assertEqual(result.id, 45)
+        self.assertIsNotNone(client.param_serialize_kwargs)
+        self.assertEqual(
+            client.param_serialize_kwargs["header_params"],
+            {
+                "Accept": "application/json",
+                "Content-Type": "multipart/form-data",
+            },
+        )
+        self.assertEqual(
+            client.param_serialize_kwargs["files"],
+            {"archive": "/tmp/archive.zip"},
+        )
+        self.assertEqual(
+            client.param_serialize_kwargs["post_params"],
+            [
+                ("name", "v2.0"),
+                ("commit_hash", "def456"),
+                ("is_deployed", True),
+            ],
+        )
+        self.assertIsNotNone(client.call_api_args)
+        self.assertIsNotNone(client.response_deserialize_args)
+
+    async def test_create_version_from_url_returns_version_creation(self) -> None:
+        server._set_version_creation_enabled(True)
+        mock = AsyncMock(return_value=_VERSION_CREATION_DICT)
+        with patch.object(
+            server.VersionsApi,
+            "post_version_with_url_organizations_organization_id_projects_project_id_versions_url_post",  # noqa: E501
+            mock,
+        ):
+            result = await server.create_version_from_url(
+                organization_id=1,
+                project_id=10,
+                version_input=VersionFromUrlInput(
+                    name="v2.0",
+                    input_type="git",
+                    url="https://github.com/acme/audit",
+                    commit_hash="def456",
+                    is_deployed=True,
+                    revision="main",
+                    includes_submodules=True,
+                ),
+            )
+        self.assertIsInstance(result, VersionCreation)
+        self.assertEqual(result.id, 45)
+        kwargs = mock.await_args.kwargs
+        self.assertEqual(kwargs["organization_id"], 1)
+        self.assertEqual(kwargs["project_id"], 10)
+        self.assertEqual(kwargs["name"], "v2.0")
+        self.assertEqual(kwargs["input_type"], "git")
+        self.assertEqual(kwargs["url"], "https://github.com/acme/audit")
+        self.assertEqual(kwargs["commit_hash"], "def456")
+        self.assertTrue(kwargs["is_deployed"])
+        self.assertEqual(kwargs["revision"], "main")
+        self.assertTrue(kwargs["includes_submodules"])
 
     async def test_get_version_comments_forwards_limit_offset(self) -> None:
         mock = AsyncMock(return_value=[_COMMENT_DICT])

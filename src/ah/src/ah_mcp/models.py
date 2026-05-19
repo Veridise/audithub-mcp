@@ -12,7 +12,7 @@ from audithub_sdk.models.task import Task
 from audithub_sdk.models.task_creation import TaskCreation
 from audithub_sdk.models.thread import Thread
 from audithub_sdk.models.version import Version
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 _PositiveId = Annotated[int, Field(strict=True, gt=0)]
 
@@ -45,6 +45,64 @@ class VersionNameIndexEntry(BaseModel):
     id: int
     name: str
     lookup_key: str
+
+
+class VersionFromUrlInput(BaseModel):
+    """Input payload for creating an AuditHub project version from a source URL."""
+
+    model_config = ConfigDict(frozen=True)
+
+    name: Annotated[str, Field(min_length=1)]
+    input_type: Literal["archive", "git"]
+    url: Annotated[str, Field(min_length=1)]
+    commit_hash: str | None = None
+    is_deployed: bool | None = False
+    revision: str | None = None
+    includes_submodules: bool | None = None
+
+
+class VersionFromArchiveInput(BaseModel):
+    """Input payload for creating an AuditHub project version from a .zip archive."""
+
+    model_config = ConfigDict(frozen=True)
+
+    name: Annotated[str, Field(min_length=1)]
+    archive: Annotated[str, Field(min_length=1)]
+    commit_hash: str | None = None
+    is_deployed: bool | None = False
+
+
+class VersionCreation(BaseModel):
+    """Response returned after an AuditHub version creation request."""
+
+    model_config = ConfigDict(frozen=True)
+
+    id: _PositiveId
+    message: str
+
+
+class TaskArtifact(BaseModel):
+    """Sanitized metadata for an artifact produced by an AuditHub task."""
+
+    model_config = ConfigDict(frozen=True)
+
+    id: Annotated[str, Field(min_length=1)]
+    name: str
+    step_code: str
+    mime_type: str
+    is_fio: bool
+
+
+class TaskArtifactContent(BaseModel):
+    """Base64-encoded content for an AuditHub task artifact."""
+
+    model_config = ConfigDict(frozen=True)
+
+    artifact_id: Annotated[str, Field(min_length=1)]
+    content_length: Annotated[int, Field(ge=0)]
+    content_base64: str
+    content_encoding: Literal["base64"] = "base64"
+    content_type: str | None = None
 
 
 class OrCaVersionSpecReference(BaseModel):
@@ -176,12 +234,52 @@ class OrCaTaskInput(BaseModel):
 
     specs_override: Annotated[list[OrCaSpecReference], Field(min_length=1)]
     hints_override: list[OrCaHintReference] | None = None
-    deployment_script_path_override: str | None = None
-    on_chain: bool | None = False
-    deployment_info_file: str | None = None
+    deployment_script_path_override: str | None = Field(
+        default=None,
+        description="Optional deployment script path for source-based OrCa runs.",
+    )
+    on_chain: bool | None = Field(
+        default=False,
+        description=(
+            "Enable on-chain OrCa fuzzing. Prefer setting deployment_info_file to a "
+            "path ending in .deployment.json; the server will normalize that to "
+            "on_chain=True."
+        ),
+    )
+    deployment_info_file: str | None = Field(
+        default=None,
+        description=(
+            "Path to a .deployment.json file containing deployed_contract_information "
+            "for on-chain fuzzing."
+        ),
+    )
     auxiliary_deployment_script: str | None = None
     name: str | None = None
     parameters: OrCaParametersInput = Field(default_factory=OrCaParametersInput)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_on_chain_mode(cls, data: object) -> object:
+        """Normalize and validate the on-chain OrCa task settings."""
+        if not isinstance(data, dict):
+            return data
+        deployment_info_file = data.get("deployment_info_file")
+        on_chain = data.get("on_chain")
+        if deployment_info_file is not None and not deployment_info_file.endswith(
+            ".deployment.json"
+        ):
+            raise ValueError(
+                "deployment_info_file must end with .deployment.json for on-chain fuzzing."
+            )
+        if deployment_info_file is not None and on_chain is not True:
+            normalized = dict(data)
+            normalized["on_chain"] = True
+            return normalized
+        if on_chain is True and deployment_info_file is None:
+            raise ValueError(
+                "on_chain=True requires deployment_info_file to point to a .deployment.json file."
+            )
+        return data
 
 __all__ = [
     "Comment",
@@ -206,8 +304,11 @@ __all__ = [
     "Project",
     "ProjectNameIndexEntry",
     "Task",
+    "TaskArtifact",
+    "TaskArtifactContent",
     "TaskCreation",
     "Thread",
     "Version",
+    "VersionFromArchiveInput",
     "VersionNameIndexEntry",
 ]
