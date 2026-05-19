@@ -47,6 +47,20 @@ class Version(_BaseSdkModel):
     is_deployed: bool
 
 
+class IdAndMessageResponse(_BaseSdkModel):
+    id: int
+    message: str
+
+
+class Artifact(_BaseSdkModel):
+    name: str
+    step_code: str
+    mime_type: str
+    is_fio: bool
+    id: str
+    presigned_url: str | None = None
+
+
 class Task(_BaseSdkModel):
     id: int
     tool_name: str
@@ -54,6 +68,12 @@ class Task(_BaseSdkModel):
     version_id: int
     status: str
     created_at: datetime
+    artifacts: list[Artifact] | None = None
+
+
+class TaskCreation(_BaseSdkModel):
+    task_id: int
+    message: str
 
 
 class FIOData(_BaseSdkModel):
@@ -108,6 +128,97 @@ class IssueForList(_BaseSdkModel):
 class IssueDetails(_BaseSdkModel):
     kind: str
     data: dict[str, Any]
+
+
+class VSpecFromVersion(_BaseSdkModel):
+    type: str = "version"
+    relative_path: str
+
+
+class VSpecFromStandardLibrary(_BaseSdkModel):
+    type: str = "stdlib"
+    category: str
+    name: str
+    library_version: str | None = None
+
+
+class VSpecFromOrganizationLibrary(_BaseSdkModel):
+    type: str = "orglib"
+    id: int
+
+
+class VSpecAdHoc(_BaseSdkModel):
+    type: str = "adhoc"
+    filename: str
+    contents: str
+    encoding: str = "plain"
+
+
+class HintFromVersion(_BaseSdkModel):
+    type: str = "version"
+    relative_path: str
+
+
+class HintFromStandardLibrary(_BaseSdkModel):
+    type: str = "stdlib"
+    category: str
+    name: str
+    library_version: str | None = None
+
+
+class HintFromOrganizationLibrary(_BaseSdkModel):
+    type: str = "orglib"
+    id: int
+
+
+class HintAdHoc(_BaseSdkModel):
+    type: str = "adhoc"
+    filename: str
+    contents: str
+    encoding: str = "plain"
+
+
+class RootModelListUnionVSpecFromVersionVSpecFromStandardLibraryVSpecFromOrganizationLibraryVSpecAdHocInner(  # noqa: E501
+    _BaseSdkModel
+):
+    actual_instance: Any
+
+
+class RootModelListUnionHintFromVersionHintFromStandardLibraryHintFromOrganizationLibraryHintAdHocInner(  # noqa: E501
+    _BaseSdkModel
+):
+    actual_instance: Any
+
+
+class FuzzingBlacklistEntry(_BaseSdkModel):
+    contract: str
+    function: str
+
+
+class OrCaParameters(_BaseSdkModel):
+    disable_user_proxies: bool | None = None
+    fuzz_pure: bool | None = None
+    fuzz_targets: list[str] | None = None
+    fuzzing_blacklist: list[FuzzingBlacklistEntry] | None = None
+    language: str | None = "solidity"
+    timeout: int | None = 600
+    fork_network: str | None = None
+    fork_block_number: int | None = None
+
+
+class OrCaInput(_BaseSdkModel):
+    specs_override: list[
+        RootModelListUnionVSpecFromVersionVSpecFromStandardLibraryVSpecFromOrganizationLibraryVSpecAdHocInner  # noqa: E501
+    ]
+    hints_override: list[
+        RootModelListUnionHintFromVersionHintFromStandardLibraryHintFromOrganizationLibraryHintAdHocInner  # noqa: E501
+    ] | None = None
+    deployment_script_path_override: str | None = None
+    on_chain: bool | None = False
+    deployment_info_file: str | None = None
+    auxiliary_deployment_script: str | None = None
+    name: str | None = None
+    parameters: OrCaParameters
 
 
 class Configuration:
@@ -191,6 +302,16 @@ class VersionsApi(_ApiBase):
     ):
         raise NotImplementedError
 
+    async def post_version_with_url_organizations_organization_id_projects_project_id_versions_url_post(  # noqa: E501
+        self, **kwargs
+    ):
+        raise NotImplementedError
+
+    async def post_version_organizations_organization_id_projects_project_id_versions_post(
+        self, **kwargs
+    ):
+        raise NotImplementedError
+
 
 class IssuesApi(_ApiBase):
     async def get_issues_organizations_organization_id_projects_project_id_issues_get(
@@ -208,12 +329,24 @@ class TasksApi(_ApiBase):
     async def get_info_organizations_organization_id_tasks_task_id_get(self, **kwargs):
         raise NotImplementedError
 
+    async def get_artifact_organizations_organization_id_tasks_task_id_artifacts_artifact_id_get_with_http_info(  # noqa: E501
+        self, **kwargs
+    ):
+        raise NotImplementedError
+
     async def get_task_findings_organizations_organization_id_tasks_task_id_findings_get(
         self, **kwargs
     ):
         raise NotImplementedError
 
     async def get_output_organizations_organization_id_tasks_task_id_step_code_output_get(
+        self, **kwargs
+    ):
+        raise NotImplementedError
+
+
+class ToolsApi(_ApiBase):
+    async def post_tool_orca_organizations_organization_id_projects_project_id_versions_version_id_tools_orca_post(  # noqa: E501
         self, **kwargs
     ):
         raise NotImplementedError
@@ -241,6 +374,8 @@ def install_sdk_stubs() -> None:
     issues_api.IssuesApi = IssuesApi
     tasks_api = _module("audithub_sdk.api.tasks_api")
     tasks_api.TasksApi = TasksApi
+    tools_api = _module("audithub_sdk.api.tools_api")
+    tools_api.ToolsApi = ToolsApi
 
     _module("audithub_sdk.models")
     for name, cls in (
@@ -248,12 +383,34 @@ def install_sdk_stubs() -> None:
         ("my_organization", MyOrganization),
         ("project", Project),
         ("version", Version),
+        ("id_and_message_response", IdAndMessageResponse),
+        ("artifact", Artifact),
         ("task", Task),
+        ("task_creation", TaskCreation),
         ("fio_data", FIOData),
         ("comment", Comment),
         ("thread", Thread),
         ("issue_for_list", IssueForList),
         ("issue_details", IssueDetails),
+        ("v_spec_from_version", VSpecFromVersion),
+        ("v_spec_from_standard_library", VSpecFromStandardLibrary),
+        ("v_spec_from_organization_library", VSpecFromOrganizationLibrary),
+        ("v_spec_ad_hoc", VSpecAdHoc),
+        ("hint_from_version", HintFromVersion),
+        ("hint_from_standard_library", HintFromStandardLibrary),
+        ("hint_from_organization_library", HintFromOrganizationLibrary),
+        ("hint_ad_hoc", HintAdHoc),
+        (
+            "root_model_list_union_v_spec_from_version_v_spec_from_standard_library_v_spec_from_organization_library_v_spec_ad_hoc_inner",  # noqa: E501
+            RootModelListUnionVSpecFromVersionVSpecFromStandardLibraryVSpecFromOrganizationLibraryVSpecAdHocInner,  # noqa: E501
+        ),
+        (
+            "root_model_list_union_hint_from_version_hint_from_standard_library_hint_from_organization_library_hint_ad_hoc_inner",  # noqa: E501
+            RootModelListUnionHintFromVersionHintFromStandardLibraryHintFromOrganizationLibraryHintAdHocInner,  # noqa: E501
+        ),
+        ("fuzzing_blacklist_entry", FuzzingBlacklistEntry),
+        ("or_ca_parameters", OrCaParameters),
+        ("or_ca_input", OrCaInput),
     ):
         mod = _module(f"audithub_sdk.models.{name}")
         setattr(mod, cls.__name__, cls)

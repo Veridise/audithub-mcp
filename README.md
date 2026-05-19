@@ -1,10 +1,10 @@
 # MCP Servers
 
-Veridise MCP servers for AI-assisted auditing. Each server exposes read-only access to a Veridise data source via the [Model Context Protocol](https://modelcontextprotocol.io/).
+Veridise MCP servers for AI-assisted auditing. Each server exposes a Veridise data source via the [Model Context Protocol](https://modelcontextprotocol.io/). Servers are read-only by default unless an opt-in mutation mode is documented for that server.
 
 | Server | Path | Data source | Access | Status |
 |---|---|---|---|---|
-| `ah` | `src/ah/` | AuditHub API | Read-only | Alpha |
+| `ah` | `src/ah/` | AuditHub API | Read-only by default; opt-in OrCa task runs | Alpha |
 
 ## Prerequisites
 
@@ -46,10 +46,10 @@ Replace `/absolute/path/to/ah.env` with the actual path to your `.env` file (see
 
 ## Security model
 
-All servers in this repo are read-only by design:
+All servers in this repo are read-only by default:
 
-1. **Read-only tool surface** -- every tool name starts with `get_`
-2. **GET-only HTTP** -- no POST/PUT/PATCH/DELETE paths exist
+1. **Default read-only tool surface** -- default tools start with `get_`
+2. **Default GET-only HTTP** -- mutation paths are absent unless explicitly enabled
 3. **Credential isolation** -- secrets from env vars, never in tool output
 4. **ID allowlisting** -- access restricted to configured IDs
 

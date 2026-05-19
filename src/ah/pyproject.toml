@@ -1,7 +1,7 @@
 [project]
 name = "ah-mcp"
 version = "0.1.0"
-description = "Read-only MCP server for AuditHub"
+description = "MCP server for AuditHub"
 requires-python = ">=3.12"
 dependencies = [
     "mcp>=1.0.0",

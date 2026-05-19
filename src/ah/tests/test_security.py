@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import unittest
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from tests.sdk_stubs import install_sdk_stubs
@@ -10,6 +11,26 @@ from tests.sdk_stubs import install_sdk_stubs
 install_sdk_stubs()
 
 import ah_mcp.server as server  # noqa: E402
+from ah_mcp.models import (  # noqa: E402
+    OrCaAdHocHintReference,
+    OrCaAdHocSpecReference,
+    OrCaParametersInput,
+    OrCaTaskInput,
+    VersionFromArchiveInput,
+    VersionFromUrlInput,
+)
+
+
+def _orca_task_input() -> OrCaTaskInput:
+    return OrCaTaskInput(
+        specs_override=[
+            OrCaAdHocSpecReference(filename="secret.spec", contents="SECRET_SPEC_CONTENT")
+        ],
+        hints_override=[
+            OrCaAdHocHintReference(filename="secret.hint", contents="SECRET_HINT_CONTENT")
+        ],
+        parameters=OrCaParametersInput(timeout=60),
+    )
 
 
 class TestDisallowedIds(unittest.IsolatedAsyncioTestCase):
@@ -20,6 +41,8 @@ class TestDisallowedIds(unittest.IsolatedAsyncioTestCase):
     async def asyncTearDown(self) -> None:
         server._allowed_org_ids = frozenset()
         server._allowed_project_ids = frozenset()
+        server._set_task_runs_enabled(False)
+        server._set_version_creation_enabled(False)
 
     async def test_get_project_disallowed_org(self) -> None:
         with self.assertRaises(RuntimeError) as cm:
@@ -56,6 +79,46 @@ class TestDisallowedIds(unittest.IsolatedAsyncioTestCase):
             mock,
         ), self.assertRaises(RuntimeError):
             await server.get_task_findings(organization_id=999, task_id=10)
+        mock.assert_not_awaited()
+
+    async def test_task_artifacts_disallowed_org(self) -> None:
+        with self.assertRaises(RuntimeError) as cm:
+            await server.get_task_artifacts(organization_id=999, task_id=10)
+        self.assertIn("999", str(cm.exception))
+        self.assertNotIn("frozenset", str(cm.exception))
+
+    async def test_task_artifacts_rejected_call_does_not_reach_sdk(self) -> None:
+        mock = AsyncMock(return_value=[])
+        with patch.object(
+            server.TasksApi,
+            "get_info_organizations_organization_id_tasks_task_id_get",
+            mock,
+        ), self.assertRaises(RuntimeError):
+            await server.get_task_artifacts(organization_id=999, task_id=10)
+        mock.assert_not_awaited()
+
+    async def test_task_artifact_disallowed_org(self) -> None:
+        with self.assertRaises(RuntimeError) as cm:
+            await server.get_task_artifact(
+                organization_id=999,
+                task_id=10,
+                artifact_id="artifact-1",
+            )
+        self.assertIn("999", str(cm.exception))
+        self.assertNotIn("frozenset", str(cm.exception))
+
+    async def test_task_artifact_rejected_call_does_not_reach_sdk(self) -> None:
+        mock = AsyncMock(return_value=SimpleNamespace(raw_data=b"", headers={}))
+        with patch.object(
+            server.TasksApi,
+            "get_artifact_organizations_organization_id_tasks_task_id_artifacts_artifact_id_get_with_http_info",  # noqa: E501
+            mock,
+        ), self.assertRaises(RuntimeError):
+            await server.get_task_artifact(
+                organization_id=999,
+                task_id=10,
+                artifact_id="artifact-1",
+            )
         mock.assert_not_awaited()
 
     async def test_project_name_index_disallowed_org(self) -> None:
@@ -96,6 +159,124 @@ class TestDisallowedIds(unittest.IsolatedAsyncioTestCase):
             await server.get_version_name_index(organization_id=999, project_id=10)
         mock.assert_not_awaited()
 
+    async def test_run_orca_disallowed_org_rejected_before_sdk_call(self) -> None:
+        server._set_task_runs_enabled(True)
+        mock = AsyncMock(return_value={"task_id": 1, "message": "created"})
+        with patch.object(
+            server.ToolsApi,
+            "post_tool_orca_organizations_organization_id_projects_project_id_versions_version_id_tools_orca_post",  # noqa: E501
+            mock,
+        ), self.assertRaises(RuntimeError) as cm:
+            await server.run_orca_task(
+                organization_id=999,
+                project_id=10,
+                version_id=42,
+                task_input=_orca_task_input(),
+            )
+        self.assertIn("999", str(cm.exception))
+        self.assertNotIn("frozenset", str(cm.exception))
+        mock.assert_not_awaited()
+
+    async def test_run_orca_disallowed_project_rejected_before_sdk_call(self) -> None:
+        server._set_task_runs_enabled(True)
+        mock = AsyncMock(return_value={"task_id": 1, "message": "created"})
+        with patch.object(
+            server.ToolsApi,
+            "post_tool_orca_organizations_organization_id_projects_project_id_versions_version_id_tools_orca_post",  # noqa: E501
+            mock,
+        ), self.assertRaises(RuntimeError) as cm:
+            await server.run_orca_task(
+                organization_id=1,
+                project_id=999,
+                version_id=42,
+                task_input=_orca_task_input(),
+            )
+        self.assertIn("999", str(cm.exception))
+        self.assertNotIn("frozenset", str(cm.exception))
+        mock.assert_not_awaited()
+
+    async def test_create_version_disallowed_org_rejected_before_sdk_call(self) -> None:
+        server._set_version_creation_enabled(True)
+        mock = AsyncMock(return_value={"id": 1, "message": "created"})
+        with patch.object(
+            server.VersionsApi,
+            "post_version_with_url_organizations_organization_id_projects_project_id_versions_url_post",  # noqa: E501
+            mock,
+        ), self.assertRaises(RuntimeError) as cm:
+            await server.create_version_from_url(
+                organization_id=999,
+                project_id=10,
+                version_input=VersionFromUrlInput(
+                    name="v2.0",
+                    input_type="git",
+                    url="https://github.com/acme/audit",
+                ),
+            )
+        self.assertIn("999", str(cm.exception))
+        self.assertNotIn("frozenset", str(cm.exception))
+        mock.assert_not_awaited()
+
+    async def test_create_version_archive_disallowed_org_rejected_before_sdk_call(self) -> None:
+        server._set_version_creation_enabled(True)
+        mock = AsyncMock(return_value={"id": 1, "message": "created"})
+        with patch.object(
+            server,
+            "_create_version_from_archive_with_client",
+            mock,
+        ), self.assertRaises(RuntimeError) as cm:
+            await server.create_version_from_archive(
+                organization_id=999,
+                project_id=10,
+                version_input=VersionFromArchiveInput(
+                    name="v2.0",
+                    archive="ARCHIVE_CONTENTS",
+                ),
+            )
+        self.assertIn("999", str(cm.exception))
+        self.assertNotIn("frozenset", str(cm.exception))
+        mock.assert_not_awaited()
+
+    async def test_create_version_archive_disallowed_project_rejected_before_sdk_call(self) -> None:
+        server._set_version_creation_enabled(True)
+        mock = AsyncMock(return_value={"id": 1, "message": "created"})
+        with patch.object(
+            server,
+            "_create_version_from_archive_with_client",
+            mock,
+        ), self.assertRaises(RuntimeError) as cm:
+            await server.create_version_from_archive(
+                organization_id=1,
+                project_id=999,
+                version_input=VersionFromArchiveInput(
+                    name="v2.0",
+                    archive="ARCHIVE_CONTENTS",
+                ),
+            )
+        self.assertIn("999", str(cm.exception))
+        self.assertNotIn("frozenset", str(cm.exception))
+        mock.assert_not_awaited()
+
+    async def test_create_version_disallowed_project_rejected_before_sdk_call(self) -> None:
+        server._set_version_creation_enabled(True)
+        mock = AsyncMock(return_value={"id": 1, "message": "created"})
+        with patch.object(
+            server.VersionsApi,
+            "post_version_with_url_organizations_organization_id_projects_project_id_versions_url_post",  # noqa: E501
+            mock,
+        ), self.assertRaises(RuntimeError) as cm:
+            await server.create_version_from_url(
+                organization_id=1,
+                project_id=999,
+                version_input=VersionFromUrlInput(
+                    name="v2.0",
+                    input_type="git",
+                    url="https://github.com/acme/audit",
+                ),
+            )
+        self.assertIn("999", str(cm.exception))
+        self.assertNotIn("frozenset", str(cm.exception))
+        mock.assert_not_awaited()
+
 
 class TestStepCodePrivacy(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
@@ -112,6 +293,7 @@ class TestStepCodePrivacy(unittest.IsolatedAsyncioTestCase):
     async def asyncTearDown(self) -> None:
         server._allowed_org_ids = frozenset()
         server._context = None
+        server._set_task_runs_enabled(False)
 
     async def test_step_code_not_in_audit_log(self) -> None:
         import ah_mcp.audit as audit_mod
@@ -126,6 +308,167 @@ class TestStepCodePrivacy(unittest.IsolatedAsyncioTestCase):
         for call in mock_info.call_args_list:
             args = " ".join(str(arg) for arg in call.args)
             self.assertNotIn(step_code, args)
+
+
+class TestArtifactPrivacy(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self) -> None:
+        server._allowed_org_ids = frozenset({1})
+        server._context = server.AuditHubSdkContext(
+            configuration=server.audithub_sdk.Configuration(host="https://example.com/api/v1"),
+            auth_context=server.OIDCClientCredentialsContext(
+                oidc_configuration_url="https://issuer/.well-known/openid-configuration",
+                client_id="client-id",
+                client_secret="client-secret",
+            ),
+        )
+
+    async def asyncTearDown(self) -> None:
+        server._allowed_org_ids = frozenset()
+        server._context = None
+
+    async def test_artifact_id_not_in_audit_log(self) -> None:
+        import ah_mcp.audit as audit_mod
+
+        artifact_id = "SECRET_ARTIFACT_ID"
+        response = SimpleNamespace(raw_data=b"artifact", headers={"content-type": "text/plain"})
+        with patch.object(
+            server.TasksApi,
+            "get_artifact_organizations_organization_id_tasks_task_id_artifacts_artifact_id_get_with_http_info",  # noqa: E501
+            AsyncMock(return_value=response),
+        ), patch.object(audit_mod.logger, "info") as mock_info:
+            await server.get_task_artifact(
+                organization_id=1,
+                task_id=1,
+                artifact_id=artifact_id,
+            )
+        for call in mock_info.call_args_list:
+            args = " ".join(str(arg) for arg in call.args)
+            self.assertNotIn(artifact_id, args)
+
+
+class TestOrCaTaskPrivacy(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self) -> None:
+        server._allowed_org_ids = frozenset({1})
+        server._allowed_project_ids = frozenset({10})
+        server._set_task_runs_enabled(True)
+        server._context = server.AuditHubSdkContext(
+            configuration=server.audithub_sdk.Configuration(host="https://example.com/api/v1"),
+            auth_context=server.OIDCClientCredentialsContext(
+                oidc_configuration_url="https://issuer/.well-known/openid-configuration",
+                client_id="client-id",
+                client_secret="client-secret",
+            ),
+        )
+
+    async def asyncTearDown(self) -> None:
+        server._allowed_org_ids = frozenset()
+        server._allowed_project_ids = frozenset()
+        server._context = None
+        server._set_task_runs_enabled(False)
+        server._set_version_creation_enabled(False)
+
+    async def test_orca_payload_not_in_audit_log(self) -> None:
+        import ah_mcp.audit as audit_mod
+
+        with patch.object(
+            server.ToolsApi,
+            "post_tool_orca_organizations_organization_id_projects_project_id_versions_version_id_tools_orca_post",  # noqa: E501
+            AsyncMock(return_value={"task_id": 1, "message": "created"}),
+        ), patch.object(audit_mod.logger, "info") as mock_info:
+            await server.run_orca_task(
+                organization_id=1,
+                project_id=10,
+                version_id=42,
+                task_input=_orca_task_input(),
+            )
+        for call in mock_info.call_args_list:
+            args = " ".join(str(arg) for arg in call.args)
+            self.assertNotIn("SECRET_SPEC_CONTENT", args)
+            self.assertNotIn("SECRET_HINT_CONTENT", args)
+
+    async def test_orca_payload_not_in_error_log(self) -> None:
+        import ah_mcp.audit as audit_mod
+
+        with patch.object(
+            server.ToolsApi,
+            "post_tool_orca_organizations_organization_id_projects_project_id_versions_version_id_tools_orca_post",  # noqa: E501
+            AsyncMock(side_effect=ValueError("SECRET_SPEC_CONTENT SECRET_HINT_CONTENT")),
+        ), patch.object(audit_mod.logger, "error") as mock_error, self.assertRaises(RuntimeError):
+            await server.run_orca_task(
+                organization_id=1,
+                project_id=10,
+                version_id=42,
+                task_input=_orca_task_input(),
+            )
+        for call in mock_error.call_args_list:
+            args = " ".join(str(arg) for arg in call.args)
+            self.assertNotIn("SECRET_SPEC_CONTENT", args)
+            self.assertNotIn("SECRET_HINT_CONTENT", args)
+
+
+class TestVersionCreationPrivacy(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self) -> None:
+        server._allowed_org_ids = frozenset({1})
+        server._allowed_project_ids = frozenset({10})
+        server._set_version_creation_enabled(True)
+        server._context = server.AuditHubSdkContext(
+            configuration=server.audithub_sdk.Configuration(host="https://example.com/api/v1"),
+            auth_context=server.OIDCClientCredentialsContext(
+                oidc_configuration_url="https://issuer/.well-known/openid-configuration",
+                client_id="client-id",
+                client_secret="client-secret",
+            ),
+        )
+
+    async def asyncTearDown(self) -> None:
+        server._allowed_org_ids = frozenset()
+        server._allowed_project_ids = frozenset()
+        server._context = None
+        server._set_version_creation_enabled(False)
+
+    async def test_version_url_not_in_audit_log(self) -> None:
+        import ah_mcp.audit as audit_mod
+
+        url = "https://example.com/private/archive.zip?token=SECRET_URL_TOKEN"
+        with patch.object(
+            server.VersionsApi,
+            "post_version_with_url_organizations_organization_id_projects_project_id_versions_url_post",  # noqa: E501
+            AsyncMock(return_value={"id": 1, "message": "created"}),
+        ), patch.object(audit_mod.logger, "info") as mock_info:
+            await server.create_version_from_url(
+                organization_id=1,
+                project_id=10,
+                version_input=VersionFromUrlInput(
+                    name="secret-version",
+                    input_type="archive",
+                    url=url,
+                ),
+            )
+        for call in mock_info.call_args_list:
+            args = " ".join(str(arg) for arg in call.args)
+            self.assertNotIn(url, args)
+            self.assertNotIn("SECRET_URL_TOKEN", args)
+
+    async def test_version_archive_not_in_audit_log(self) -> None:
+        import ah_mcp.audit as audit_mod
+
+        archive = "SECRET_ARCHIVE_CONTENTS"
+        with patch.object(
+            server,
+            "_create_version_from_archive_with_client",
+            AsyncMock(return_value={"id": 1, "message": "created"}),
+        ), patch.object(audit_mod.logger, "info") as mock_info:
+            await server.create_version_from_archive(
+                organization_id=1,
+                project_id=10,
+                version_input=VersionFromArchiveInput(
+                    name="secret-version",
+                    archive=archive,
+                ),
+            )
+        for call in mock_info.call_args_list:
+            args = " ".join(str(arg) for arg in call.args)
+            self.assertNotIn(archive, args)
 
 
 class TestErrorSanitization(unittest.IsolatedAsyncioTestCase):

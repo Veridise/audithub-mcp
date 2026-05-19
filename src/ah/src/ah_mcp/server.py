@@ -1,20 +1,21 @@
-"""Read-only MCP server for AuditHub backed exclusively by ``audithub-sdk``.
+"""MCP server for AuditHub backed exclusively by ``audithub-sdk``.
 
 Security model
 --------------
-This server is intentionally read-only. Every MCP tool is named ``get_*`` and
-only invokes generated SDK methods for HTTP GET endpoints. No raw HTTP helper
-or mutation-capable AuditHub client remains in this module.
+This server is read-only by default. Read tools are named ``get_*`` and only
+invoke generated SDK methods for HTTP GET endpoints. Mutation tools are
+registered only when their narrow opt-in gates are explicitly enabled.
 """
 
 from __future__ import annotations
 
 import argparse
+import base64
 import inspect
 import os
 import sys
 import time
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Annotated
 
@@ -22,8 +23,26 @@ import audithub_sdk
 from audithub_sdk.api.issues_api import IssuesApi
 from audithub_sdk.api.projects_api import ProjectsApi
 from audithub_sdk.api.tasks_api import TasksApi
+from audithub_sdk.api.tools_api import ToolsApi
 from audithub_sdk.api.users_api import UsersApi
 from audithub_sdk.api.versions_api import VersionsApi
+from audithub_sdk.models.fuzzing_blacklist_entry import FuzzingBlacklistEntry
+from audithub_sdk.models.hint_ad_hoc import HintAdHoc
+from audithub_sdk.models.hint_from_organization_library import HintFromOrganizationLibrary
+from audithub_sdk.models.hint_from_standard_library import HintFromStandardLibrary
+from audithub_sdk.models.hint_from_version import HintFromVersion
+from audithub_sdk.models.or_ca_input import OrCaInput
+from audithub_sdk.models.or_ca_parameters import OrCaParameters
+from audithub_sdk.models.root_model_list_union_hint_from_version_hint_from_standard_library_hint_from_organization_library_hint_ad_hoc_inner import (  # noqa: E501
+    RootModelListUnionHintFromVersionHintFromStandardLibraryHintFromOrganizationLibraryHintAdHocInner as SdkOrCaHintReference,  # noqa: E501
+)
+from audithub_sdk.models.root_model_list_union_v_spec_from_version_v_spec_from_standard_library_v_spec_from_organization_library_v_spec_ad_hoc_inner import (  # noqa: E501
+    RootModelListUnionVSpecFromVersionVSpecFromStandardLibraryVSpecFromOrganizationLibraryVSpecAdHocInner as SdkOrCaSpecReference,  # noqa: E501
+)
+from audithub_sdk.models.v_spec_ad_hoc import VSpecAdHoc
+from audithub_sdk.models.v_spec_from_organization_library import VSpecFromOrganizationLibrary
+from audithub_sdk.models.v_spec_from_standard_library import VSpecFromStandardLibrary
+from audithub_sdk.models.v_spec_from_version import VSpecFromVersion
 from audithub_sdk_ext import AuthenticatedApiClient, OIDCClientCredentialsContext
 from mcp.server.fastmcp import FastMCP
 from pydantic import Field, TypeAdapter
@@ -35,16 +54,36 @@ from ah_mcp.models import (
     IssueDetails,
     IssueForList,
     MyOrganization,
+    OrCaAdHocHintReference,
+    OrCaAdHocSpecReference,
+    OrCaHintReference,
+    OrCaOrganizationLibraryHintReference,
+    OrCaOrganizationLibrarySpecReference,
+    OrCaParametersInput,
+    OrCaSpecReference,
+    OrCaStandardLibraryHintReference,
+    OrCaStandardLibrarySpecReference,
+    OrCaTaskInput,
+    OrCaVersionHintReference,
+    OrCaVersionSpecReference,
     OrganizationNameIndexEntry,
     Project,
     ProjectNameIndexEntry,
     Task,
+    TaskArtifact,
+    TaskArtifactContent,
+    TaskCreation,
     Thread,
     Version,
+    VersionCreation,
+    VersionFromArchiveInput,
+    VersionFromUrlInput,
     VersionNameIndexEntry,
 )
 
 _AhId = Annotated[int, Field(strict=True, gt=0)]
+_ArtifactId = Annotated[str, Field(min_length=1)]
+_MaxBytes = Annotated[int, Field(strict=True, gt=0)]
 
 mcp = FastMCP("ah")
 
@@ -67,6 +106,8 @@ class AuditHubSdkContext:
 _context: AuditHubSdkContext | None = None
 _allowed_org_ids: frozenset[int] = frozenset()
 _allowed_project_ids: frozenset[int] = frozenset()
+_task_runs_enabled = False
+_version_creation_enabled = False
 
 _org_ta = TypeAdapter(list[MyOrganization])
 _comment_ta = TypeAdapter(list[Comment])
@@ -76,6 +117,22 @@ _issue_list_ta = TypeAdapter(list[IssueForList])
 _project_ta = TypeAdapter(list[Project])
 _version_ta = TypeAdapter(list[Version])
 _str_list_ta = TypeAdapter(list[str])
+_orca_task_creation_ta = TypeAdapter(TaskCreation)
+_version_creation_ta = TypeAdapter(VersionCreation)
+
+_DEFAULT_ARTIFACT_MAX_BYTES = 5 * 1024 * 1024
+
+_TASK_RUN_TOOL_NAME = "run_orca_task"
+_VERSION_CREATION_TOOL_NAMES = (
+    "create_version_from_archive",
+    "create_version_from_url",
+)
+_SdkOrCaSpecActual = (
+    VSpecFromVersion | VSpecFromStandardLibrary | VSpecFromOrganizationLibrary | VSpecAdHoc
+)
+_SdkOrCaHintActual = (
+    HintFromVersion | HintFromStandardLibrary | HintFromOrganizationLibrary | HintAdHoc
+)
 
 
 def _parse_id_list(value: str, flag: str) -> frozenset[int]:
@@ -88,6 +145,69 @@ def _parse_id_list(value: str, flag: str) -> frozenset[int]:
     if non_positive:
         sys.exit(f"Error: {flag} contains non-positive IDs: {sorted(non_positive)}")
     return ids
+
+
+def _parse_bool_flag(value: str | None, flag: str) -> bool:
+    """Parse an optional boolean environment flag."""
+    if value is None or value == "":
+        return False
+    normalized = value.strip().casefold()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    sys.exit(f"Error: {flag} must be one of 1/0, true/false, yes/no, or on/off.")
+
+
+def _is_tool_registered(tool_name: str) -> bool:
+    """Return whether an MCP tool is currently registered."""
+    return tool_name in mcp._tool_manager._tools
+
+
+def _set_task_runs_enabled(enabled: bool) -> None:
+    """Enable or disable opt-in task-run MCP tools."""
+    global _task_runs_enabled
+    _task_runs_enabled = enabled
+    if enabled:
+        if not _is_tool_registered(_TASK_RUN_TOOL_NAME):
+            mcp.add_tool(run_orca_task)
+        return
+    if _is_tool_registered(_TASK_RUN_TOOL_NAME):
+        mcp.remove_tool(_TASK_RUN_TOOL_NAME)
+
+
+def _set_version_creation_enabled(enabled: bool) -> None:
+    """Enable or disable opt-in version-creation MCP tools."""
+    global _version_creation_enabled
+    _version_creation_enabled = enabled
+    if enabled:
+        if not _is_tool_registered(_VERSION_CREATION_TOOL_NAMES[0]):
+            mcp.add_tool(create_version_from_archive)
+        if not _is_tool_registered(_VERSION_CREATION_TOOL_NAMES[1]):
+            mcp.add_tool(create_version_from_url)
+        return
+    for tool_name in _VERSION_CREATION_TOOL_NAMES:
+        if _is_tool_registered(tool_name):
+            mcp.remove_tool(tool_name)
+
+
+def _assert_task_runs_enabled() -> None:
+    """Raise unless mutating AuditHub task runs are enabled."""
+    if not _task_runs_enabled:
+        raise RuntimeError(
+            "AuditHub task runs are disabled. Restart the server with "
+            "--enable-task-runs or AH_ENABLE_TASK_RUNS=1 to enable run_orca_task."
+        )
+
+
+def _assert_version_creation_enabled() -> None:
+    """Raise unless mutating AuditHub version creation is enabled."""
+    if not _version_creation_enabled:
+        raise RuntimeError(
+            "AuditHub version creation is disabled. Restart the server with "
+            "--enable-version-creation or AH_ENABLE_VERSION_CREATION=1 to enable "
+            "create_version_from_archive and create_version_from_url."
+        )
 
 
 def _build_context() -> AuditHubSdkContext:
@@ -161,6 +281,35 @@ def _normalize_lookup_key(name: str) -> str:
     return name.strip().casefold()
 
 
+def _sanitize_task(task: Task) -> Task:
+    """Remove credential-like fields from SDK task objects before returning them."""
+    if task.artifacts is not None:
+        for artifact in task.artifacts:
+            artifact.presigned_url = None
+    return task
+
+
+def _task_artifacts(task: Task) -> list[TaskArtifact]:
+    """Return sanitized task artifact metadata."""
+    if task.artifacts is None:
+        return []
+    return [
+        TaskArtifact.model_validate(artifact, from_attributes=True)
+        for artifact in task.artifacts
+    ]
+
+
+def _response_header(headers: Mapping[str, str] | None, name: str) -> str | None:
+    """Read a response header without depending on a concrete header mapping type."""
+    if headers is None:
+        return None
+    folded_name = name.casefold()
+    for key, value in headers.items():
+        if key.casefold() == folded_name:
+            return value
+    return None
+
+
 async def _with_api_client[T](fn: Callable[[AuthenticatedApiClient], Awaitable[T]]) -> T:
     """Create an authenticated SDK client for a single tool invocation."""
     ctx = _ctx()
@@ -202,15 +351,20 @@ async def _run_tool[T](
         raise
     except Exception as exc:
         elapsed_ms = (time.monotonic() - start) * 1000
+        safe_message = (
+            _safe_exception_message(exc)
+            if isinstance(getattr(exc, "status", None), int)
+            else "An internal error occurred."
+        )
         if tool_name:
-            log_call_error(tool_name, str(exc), elapsed_ms)
+            log_call_error(tool_name, safe_message, elapsed_ms)
             sanitized = RuntimeError(
                 "An internal error occurred. Details have been logged."
                 if not isinstance(getattr(exc, "status", None), int)
-                else _safe_exception_message(exc)
+                else safe_message
             )
         else:
-            sanitized = RuntimeError(_safe_exception_message(exc))
+            sanitized = RuntimeError(safe_message)
     raise sanitized
 
 
@@ -380,12 +534,74 @@ async def get_task_info(organization_id: _AhId, task_id: _AhId) -> Task:
                 task_id=task_id,
             )
         )
-        return Task.model_validate(task)
+        return _sanitize_task(Task.model_validate(task))
 
     return await _run_tool(
         _run,
         tool_name="get_task_info",
         safe_args={"organization_id": organization_id, "task_id": task_id},
+    )
+
+
+@mcp.tool()
+async def get_task_artifacts(organization_id: _AhId, task_id: _AhId) -> list[TaskArtifact]:
+    """List sanitized artifact metadata for an AuditHub task."""
+
+    async def _run() -> list[TaskArtifact]:
+        _assert_org_allowed(organization_id)
+        task = await _with_api_client(
+            lambda client: TasksApi(client).get_info_organizations_organization_id_tasks_task_id_get(  # noqa: E501
+                organization_id=organization_id,
+                task_id=task_id,
+            )
+        )
+        return _task_artifacts(Task.model_validate(task))
+
+    return await _run_tool(
+        _run,
+        tool_name="get_task_artifacts",
+        safe_args={"organization_id": organization_id, "task_id": task_id},
+    )
+
+
+@mcp.tool()
+async def get_task_artifact(
+    organization_id: _AhId,
+    task_id: _AhId,
+    artifact_id: _ArtifactId,
+    max_bytes: _MaxBytes | None = _DEFAULT_ARTIFACT_MAX_BYTES,
+) -> TaskArtifactContent:
+    """Fetch an AuditHub task artifact as base64-encoded content."""
+
+    async def _run() -> TaskArtifactContent:
+        _assert_org_allowed(organization_id)
+        response = await _with_api_client(
+            lambda client: TasksApi(client).get_artifact_organizations_organization_id_tasks_task_id_artifacts_artifact_id_get_with_http_info(  # noqa: E501
+                organization_id=organization_id,
+                task_id=task_id,
+                artifact_id=artifact_id,
+            )
+        )
+        raw_data = response.raw_data
+        if max_bytes is not None and len(raw_data) > max_bytes:
+            raise RuntimeError(
+                f"Artifact content is {len(raw_data)} bytes, exceeding max_bytes={max_bytes}."
+            )
+        return TaskArtifactContent(
+            artifact_id=artifact_id,
+            content_length=len(raw_data),
+            content_base64=base64.b64encode(raw_data).decode("ascii"),
+            content_type=_response_header(response.headers, "content-type"),
+        )
+
+    return await _run_tool(
+        _run,
+        tool_name="get_task_artifact",
+        safe_args={
+            "organization_id": organization_id,
+            "task_id": task_id,
+            "max_bytes": max_bytes,
+        },
     )
 
 
@@ -653,10 +869,241 @@ async def get_project_comments(
     )
 
 
+def _build_sdk_orca_spec(reference: OrCaSpecReference) -> SdkOrCaSpecReference:
+    """Convert a local OrCa spec reference to the generated SDK union wrapper."""
+    sdk_reference: _SdkOrCaSpecActual
+    if isinstance(reference, OrCaVersionSpecReference):
+        sdk_reference = VSpecFromVersion(relative_path=reference.relative_path)
+    elif isinstance(reference, OrCaStandardLibrarySpecReference):
+        sdk_reference = VSpecFromStandardLibrary(
+            category=reference.category,
+            name=reference.name,
+            library_version=reference.library_version,
+        )
+    elif isinstance(reference, OrCaOrganizationLibrarySpecReference):
+        sdk_reference = VSpecFromOrganizationLibrary(id=reference.id)
+    elif isinstance(reference, OrCaAdHocSpecReference):
+        sdk_reference = VSpecAdHoc(
+            filename=reference.filename,
+            contents=reference.contents,
+            encoding=reference.encoding,
+        )
+    else:
+        raise TypeError("Unsupported OrCa spec reference type.")
+    return SdkOrCaSpecReference(actual_instance=sdk_reference)
+
+
+def _build_sdk_orca_hint(reference: OrCaHintReference) -> SdkOrCaHintReference:
+    """Convert a local OrCa hint reference to the generated SDK union wrapper."""
+    sdk_reference: _SdkOrCaHintActual
+    if isinstance(reference, OrCaVersionHintReference):
+        sdk_reference = HintFromVersion(relative_path=reference.relative_path)
+    elif isinstance(reference, OrCaStandardLibraryHintReference):
+        sdk_reference = HintFromStandardLibrary(
+            category=reference.category,
+            name=reference.name,
+            library_version=reference.library_version,
+        )
+    elif isinstance(reference, OrCaOrganizationLibraryHintReference):
+        sdk_reference = HintFromOrganizationLibrary(id=reference.id)
+    elif isinstance(reference, OrCaAdHocHintReference):
+        sdk_reference = HintAdHoc(
+            filename=reference.filename,
+            contents=reference.contents,
+            encoding=reference.encoding,
+        )
+    else:
+        raise TypeError("Unsupported OrCa hint reference type.")
+    return SdkOrCaHintReference(actual_instance=sdk_reference)
+
+
+def _build_sdk_orca_parameters(parameters: OrCaParametersInput) -> OrCaParameters:
+    """Convert local OrCa parameters to generated SDK parameters."""
+    fuzzing_blacklist = (
+        None
+        if parameters.fuzzing_blacklist is None
+        else [
+            FuzzingBlacklistEntry(contract=entry.contract, function=entry.function)
+            for entry in parameters.fuzzing_blacklist
+        ]
+    )
+    return OrCaParameters(
+        disable_user_proxies=parameters.disable_user_proxies,
+        fuzz_pure=parameters.fuzz_pure,
+        fuzz_targets=parameters.fuzz_targets,
+        fuzzing_blacklist=fuzzing_blacklist,
+        language=parameters.language,
+        timeout=parameters.timeout,
+        fork_network=parameters.fork_network,
+        fork_block_number=parameters.fork_block_number,
+    )
+
+
+def _build_sdk_orca_input(task_input: OrCaTaskInput) -> OrCaInput:
+    """Convert local OrCa task input to the generated SDK input model."""
+    hints_override = (
+        None
+        if task_input.hints_override is None
+        else [_build_sdk_orca_hint(reference) for reference in task_input.hints_override]
+    )
+    return OrCaInput(
+        specs_override=[_build_sdk_orca_spec(reference) for reference in task_input.specs_override],
+        hints_override=hints_override,
+        deployment_script_path_override=task_input.deployment_script_path_override,
+        on_chain=task_input.on_chain,
+        deployment_info_file=task_input.deployment_info_file,
+        auxiliary_deployment_script=task_input.auxiliary_deployment_script,
+        name=task_input.name,
+        parameters=_build_sdk_orca_parameters(task_input.parameters),
+    )
+
+
+async def run_orca_task(
+    organization_id: _AhId,
+    project_id: _AhId,
+    version_id: _AhId,
+    task_input: OrCaTaskInput,
+) -> TaskCreation:
+    """Run an OrCa task for a specific AuditHub project version."""
+
+    async def _run() -> TaskCreation:
+        _assert_task_runs_enabled()
+        _assert_org_allowed(organization_id)
+        _assert_project_allowed(project_id)
+        created_task = await _with_api_client(
+            lambda client: ToolsApi(
+                client
+            ).post_tool_orca_organizations_organization_id_projects_project_id_versions_version_id_tools_orca_post(  # noqa: E501
+                organization_id=organization_id,
+                project_id=project_id,
+                version_id=version_id,
+                or_ca_input=_build_sdk_orca_input(task_input),
+            )
+        )
+        return _orca_task_creation_ta.validate_python(created_task)
+
+    return await _run_tool(
+        _run,
+        tool_name=_TASK_RUN_TOOL_NAME,
+        safe_args={
+            "organization_id": organization_id,
+            "project_id": project_id,
+            "version_id": version_id,
+        },
+    )
+
+
+async def create_version_from_url(
+    organization_id: _AhId,
+    project_id: _AhId,
+    version_input: VersionFromUrlInput,
+) -> VersionCreation:
+    """Create an AuditHub project version from a git repository or archive URL."""
+
+    async def _run() -> VersionCreation:
+        _assert_version_creation_enabled()
+        _assert_org_allowed(organization_id)
+        _assert_project_allowed(project_id)
+        created_version = await _with_api_client(
+            lambda client: VersionsApi(
+                client
+            ).post_version_with_url_organizations_organization_id_projects_project_id_versions_url_post(  # noqa: E501
+                organization_id=organization_id,
+                project_id=project_id,
+                name=version_input.name,
+                input_type=version_input.input_type,
+                url=version_input.url,
+                commit_hash=version_input.commit_hash,
+                is_deployed=version_input.is_deployed,
+                revision=version_input.revision,
+                includes_submodules=version_input.includes_submodules,
+            )
+        )
+        return _version_creation_ta.validate_python(created_version)
+
+    return await _run_tool(
+        _run,
+        tool_name=_VERSION_CREATION_TOOL_NAMES[1],
+        safe_args={"organization_id": organization_id, "project_id": project_id},
+    )
+
+
+async def create_version_from_archive(
+    organization_id: _AhId,
+    project_id: _AhId,
+    version_input: VersionFromArchiveInput,
+) -> VersionCreation:
+    """Create an AuditHub project version by uploading a local .zip archive."""
+
+    async def _run() -> VersionCreation:
+        _assert_version_creation_enabled()
+        _assert_org_allowed(organization_id)
+        _assert_project_allowed(project_id)
+        created_version = await _with_api_client(
+            lambda client: _create_version_from_archive_with_client(
+                client,
+                organization_id=organization_id,
+                project_id=project_id,
+                version_input=version_input,
+            )
+        )
+        return _version_creation_ta.validate_python(created_version)
+
+    return await _run_tool(
+        _run,
+        tool_name=_VERSION_CREATION_TOOL_NAMES[0],
+        safe_args={"organization_id": organization_id, "project_id": project_id},
+    )
+
+
+async def _create_version_from_archive_with_client(
+    client: AuthenticatedApiClient,
+    *,
+    organization_id: int,
+    project_id: int,
+    version_input: VersionFromArchiveInput,
+) -> VersionCreation:
+    """Create a version by sending the .zip archive as multipart upload data."""
+    method, url, headers, body, post_params = client.param_serialize(
+        method="POST",
+        resource_path="/organizations/{organization_id}/projects/{project_id}/versions",
+        path_params={"organization_id": organization_id, "project_id": project_id},
+        query_params=None,
+        header_params={
+            "Accept": "application/json",
+            "Content-Type": "multipart/form-data",
+        },
+        body=None,
+        post_params=[
+            ("name", version_input.name),
+            *(
+                [("commit_hash", version_input.commit_hash)]
+                if version_input.commit_hash is not None
+                else []
+            ),
+            *(
+                [("is_deployed", version_input.is_deployed)]
+                if version_input.is_deployed is not None
+                else []
+            ),
+        ],
+        files={"archive": version_input.archive},
+        auth_settings=["OpenIdConnect"],
+        collection_formats={},
+    )
+    response_data = await client.call_api(method, url, headers, body, post_params)
+    await response_data.read()
+    created_version = client.response_deserialize(
+        response_data=response_data,
+        response_types_map={"200": "IdAndMessageResponse"},
+    ).data
+    return _version_creation_ta.validate_python(created_version.model_dump())
+
+
 def main() -> None:
     """Entry point for the ``ah-mcp`` console script."""
     parser = argparse.ArgumentParser(
-        description="AuditHub read-only MCP server",
+        description="AuditHub MCP server",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
@@ -675,10 +1122,26 @@ def main() -> None:
             "(overrides AH_ALLOWED_PROJECT_IDS)."
         ),
     )
+    parser.add_argument(
+        "--enable-task-runs",
+        action="store_true",
+        help="Register opt-in mutation tools that can start AuditHub tasks.",
+    )
+    parser.add_argument(
+        "--enable-version-creation",
+        action="store_true",
+        help="Register opt-in mutation tools that can create AuditHub project versions.",
+    )
     args, _ = parser.parse_known_args()
 
     org_ids_raw = args.allowed_org_ids or os.environ.get("AH_ALLOWED_ORG_IDS", "")
     proj_ids_raw = args.allowed_project_ids or os.environ.get("AH_ALLOWED_PROJECT_IDS", "")
+    task_runs_enabled = args.enable_task_runs or _parse_bool_flag(
+        os.environ.get("AH_ENABLE_TASK_RUNS"), "AH_ENABLE_TASK_RUNS"
+    )
+    version_creation_enabled = args.enable_version_creation or _parse_bool_flag(
+        os.environ.get("AH_ENABLE_VERSION_CREATION"), "AH_ENABLE_VERSION_CREATION"
+    )
 
     if not org_ids_raw:
         sys.exit(
@@ -696,6 +1159,8 @@ def main() -> None:
     _allowed_project_ids = _parse_id_list(
         proj_ids_raw, "--allowed-project-ids / AH_ALLOWED_PROJECT_IDS"
     )
+    _set_task_runs_enabled(task_runs_enabled)
+    _set_version_creation_enabled(version_creation_enabled)
     _context = _build_context()
     mcp.run()
 

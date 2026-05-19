@@ -4,7 +4,7 @@ Instructions for AI agents (Codex, ChatGPT, and others) working in this reposito
 
 ## Repository purpose
 
-Monorepo of read-only MCP servers for Veridise tooling. Each server exposes a Veridise data source via the Model Context Protocol.
+Monorepo of MCP servers for Veridise tooling. Each server exposes a Veridise data source via the Model Context Protocol. Servers are read-only by default unless a server documents an explicit opt-in mutation mode.
 
 ## Structure
 
@@ -22,8 +22,8 @@ Each server lives in `src/<name>/` as a self-contained Python package with its o
 
 These are non-negotiable. Every server must satisfy all four:
 
-1. **Read-only tool surface**: every tool name starts with `get_`. No tool may create, modify, or delete resources.
-2. **GET-only HTTP**: no POST/PUT/PATCH/DELETE paths. The HTTP helper is hard-wired to GET.
+1. **Default read-only tool surface**: default tools start with `get_`. Mutation tools require an explicit opt-in gate and must be narrowly scoped.
+2. **Default GET-only HTTP**: no POST/PUT/PATCH/DELETE paths unless a server documents an opt-in mutation mode. Admin endpoints remain forbidden.
 3. **Credential isolation**: secrets come from environment variables, read once at startup. Never include credentials in tool output, error messages, or logs.
 4. **ID allowlisting**: access is restricted to explicitly configured IDs. Reject disallowed IDs before making any network request. Error messages must not enumerate the full allowlist.
 
@@ -68,13 +68,13 @@ pytest
 
 Tests stub private libraries via `sys.modules` so they run in CI without proprietary dependencies. Test security properties explicitly:
 
-- Read-only tool surface (all tool names start with `get_`)
+- Default read-only tool surface and any opt-in mutation gates
 - Allowlist enforcement (disallowed IDs rejected before network calls)
 - Credential isolation (exceptions sanitized, secrets not in output)
 
 ## Do not
 
-- Add mutation tools (POST/PUT/PATCH/DELETE).
+- Add mutation tools (POST/PUT/PATCH/DELETE) without an explicit opt-in gate and security tests.
 - Install private libraries in CI.
 - Use relative imports.
 - Use raw `dict`/`str`/`tuple` for domain objects.

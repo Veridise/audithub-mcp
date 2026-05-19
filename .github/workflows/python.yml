@@ -40,7 +40,7 @@ jobs:
           uv sync --frozen
 
       - name: Supply chain audit
-        run: uv run pip-audit
+        run: uv run pip-audit --skip-editable
 
       - name: Lint (ruff)
         run: uv run ruff check src tests
