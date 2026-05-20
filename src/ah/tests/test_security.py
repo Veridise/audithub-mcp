@@ -57,11 +57,14 @@ class TestDisallowedIds(unittest.IsolatedAsyncioTestCase):
 
     async def test_rejected_call_does_not_reach_sdk(self) -> None:
         mock = AsyncMock(return_value={"id": 10, "name": "Audit"})
-        with patch.object(
-            server.ProjectsApi,
-            "get_project_organizations_organization_id_projects_project_id_get",
-            mock,
-        ), self.assertRaises(RuntimeError):
+        with (
+            patch.object(
+                server.ProjectsApi,
+                "get_project_organizations_organization_id_projects_project_id_get",
+                mock,
+            ),
+            self.assertRaises(RuntimeError),
+        ):
             await server.get_project(organization_id=999, project_id=10)
         mock.assert_not_awaited()
 
@@ -73,11 +76,14 @@ class TestDisallowedIds(unittest.IsolatedAsyncioTestCase):
 
     async def test_task_findings_rejected_call_does_not_reach_sdk(self) -> None:
         mock = AsyncMock(return_value=[])
-        with patch.object(
-            server.TasksApi,
-            "get_task_findings_organizations_organization_id_tasks_task_id_findings_get",
-            mock,
-        ), self.assertRaises(RuntimeError):
+        with (
+            patch.object(
+                server.TasksApi,
+                "get_task_findings_organizations_organization_id_tasks_task_id_findings_get",
+                mock,
+            ),
+            self.assertRaises(RuntimeError),
+        ):
             await server.get_task_findings(organization_id=999, task_id=10)
         mock.assert_not_awaited()
 
@@ -89,11 +95,14 @@ class TestDisallowedIds(unittest.IsolatedAsyncioTestCase):
 
     async def test_task_artifacts_rejected_call_does_not_reach_sdk(self) -> None:
         mock = AsyncMock(return_value=[])
-        with patch.object(
-            server.TasksApi,
-            "get_info_organizations_organization_id_tasks_task_id_get",
-            mock,
-        ), self.assertRaises(RuntimeError):
+        with (
+            patch.object(
+                server.TasksApi,
+                "get_info_organizations_organization_id_tasks_task_id_get",
+                mock,
+            ),
+            self.assertRaises(RuntimeError),
+        ):
             await server.get_task_artifacts(organization_id=999, task_id=10)
         mock.assert_not_awaited()
 
@@ -109,11 +118,14 @@ class TestDisallowedIds(unittest.IsolatedAsyncioTestCase):
 
     async def test_task_artifact_rejected_call_does_not_reach_sdk(self) -> None:
         mock = AsyncMock(return_value=SimpleNamespace(raw_data=b"", headers={}))
-        with patch.object(
-            server.TasksApi,
-            "get_artifact_organizations_organization_id_tasks_task_id_artifacts_artifact_id_get_with_http_info",  # noqa: E501
-            mock,
-        ), self.assertRaises(RuntimeError):
+        with (
+            patch.object(
+                server.TasksApi,
+                "get_artifact_organizations_organization_id_tasks_task_id_artifacts_artifact_id_get_with_http_info",  # noqa: E501
+                mock,
+            ),
+            self.assertRaises(RuntimeError),
+        ):
             await server.get_task_artifact(
                 organization_id=999,
                 task_id=10,
@@ -129,11 +141,14 @@ class TestDisallowedIds(unittest.IsolatedAsyncioTestCase):
 
     async def test_project_name_index_rejected_call_does_not_reach_sdk(self) -> None:
         mock = AsyncMock(return_value=[{"id": 10, "name": "Audit"}])
-        with patch.object(
-            server.ProjectsApi,
-            "get_project_organizations_organization_id_projects_project_id_get",
-            mock,
-        ), self.assertRaises(RuntimeError):
+        with (
+            patch.object(
+                server.ProjectsApi,
+                "get_project_organizations_organization_id_projects_project_id_get",
+                mock,
+            ),
+            self.assertRaises(RuntimeError),
+        ):
             await server.get_project_name_index(organization_id=999)
         mock.assert_not_awaited()
 
@@ -151,22 +166,28 @@ class TestDisallowedIds(unittest.IsolatedAsyncioTestCase):
 
     async def test_version_name_index_rejected_call_does_not_reach_sdk(self) -> None:
         mock = AsyncMock(return_value=[{"id": 42, "name": "v1.0"}])
-        with patch.object(
-            server.VersionsApi,
-            "get_versions_organizations_organization_id_projects_project_id_versions_get",
-            mock,
-        ), self.assertRaises(RuntimeError):
+        with (
+            patch.object(
+                server.VersionsApi,
+                "get_versions_organizations_organization_id_projects_project_id_versions_get",
+                mock,
+            ),
+            self.assertRaises(RuntimeError),
+        ):
             await server.get_version_name_index(organization_id=999, project_id=10)
         mock.assert_not_awaited()
 
     async def test_run_orca_disallowed_org_rejected_before_sdk_call(self) -> None:
         server._set_task_runs_enabled(True)
         mock = AsyncMock(return_value={"task_id": 1, "message": "created"})
-        with patch.object(
-            server.ToolsApi,
-            "post_tool_orca_organizations_organization_id_projects_project_id_versions_version_id_tools_orca_post",  # noqa: E501
-            mock,
-        ), self.assertRaises(RuntimeError) as cm:
+        with (
+            patch.object(
+                server.ToolsApi,
+                "post_tool_orca_organizations_organization_id_projects_project_id_versions_version_id_tools_orca_post",  # noqa: E501
+                mock,
+            ),
+            self.assertRaises(RuntimeError) as cm,
+        ):
             await server.run_orca_task(
                 organization_id=999,
                 project_id=10,
@@ -180,11 +201,14 @@ class TestDisallowedIds(unittest.IsolatedAsyncioTestCase):
     async def test_run_orca_disallowed_project_rejected_before_sdk_call(self) -> None:
         server._set_task_runs_enabled(True)
         mock = AsyncMock(return_value={"task_id": 1, "message": "created"})
-        with patch.object(
-            server.ToolsApi,
-            "post_tool_orca_organizations_organization_id_projects_project_id_versions_version_id_tools_orca_post",  # noqa: E501
-            mock,
-        ), self.assertRaises(RuntimeError) as cm:
+        with (
+            patch.object(
+                server.ToolsApi,
+                "post_tool_orca_organizations_organization_id_projects_project_id_versions_version_id_tools_orca_post",  # noqa: E501
+                mock,
+            ),
+            self.assertRaises(RuntimeError) as cm,
+        ):
             await server.run_orca_task(
                 organization_id=1,
                 project_id=999,
@@ -198,11 +222,14 @@ class TestDisallowedIds(unittest.IsolatedAsyncioTestCase):
     async def test_create_version_disallowed_org_rejected_before_sdk_call(self) -> None:
         server._set_version_creation_enabled(True)
         mock = AsyncMock(return_value={"id": 1, "message": "created"})
-        with patch.object(
-            server.VersionsApi,
-            "post_version_with_url_organizations_organization_id_projects_project_id_versions_url_post",  # noqa: E501
-            mock,
-        ), self.assertRaises(RuntimeError) as cm:
+        with (
+            patch.object(
+                server.VersionsApi,
+                "post_version_with_url_organizations_organization_id_projects_project_id_versions_url_post",  # noqa: E501
+                mock,
+            ),
+            self.assertRaises(RuntimeError) as cm,
+        ):
             await server.create_version_from_url(
                 organization_id=999,
                 project_id=10,
@@ -219,11 +246,14 @@ class TestDisallowedIds(unittest.IsolatedAsyncioTestCase):
     async def test_create_version_archive_disallowed_org_rejected_before_sdk_call(self) -> None:
         server._set_version_creation_enabled(True)
         mock = AsyncMock(return_value={"id": 1, "message": "created"})
-        with patch.object(
-            server,
-            "_create_version_from_archive_with_client",
-            mock,
-        ), self.assertRaises(RuntimeError) as cm:
+        with (
+            patch.object(
+                server,
+                "_create_version_from_archive_with_client",
+                mock,
+            ),
+            self.assertRaises(RuntimeError) as cm,
+        ):
             await server.create_version_from_archive(
                 organization_id=999,
                 project_id=10,
@@ -239,11 +269,14 @@ class TestDisallowedIds(unittest.IsolatedAsyncioTestCase):
     async def test_create_version_archive_disallowed_project_rejected_before_sdk_call(self) -> None:
         server._set_version_creation_enabled(True)
         mock = AsyncMock(return_value={"id": 1, "message": "created"})
-        with patch.object(
-            server,
-            "_create_version_from_archive_with_client",
-            mock,
-        ), self.assertRaises(RuntimeError) as cm:
+        with (
+            patch.object(
+                server,
+                "_create_version_from_archive_with_client",
+                mock,
+            ),
+            self.assertRaises(RuntimeError) as cm,
+        ):
             await server.create_version_from_archive(
                 organization_id=1,
                 project_id=999,
@@ -259,11 +292,14 @@ class TestDisallowedIds(unittest.IsolatedAsyncioTestCase):
     async def test_create_version_disallowed_project_rejected_before_sdk_call(self) -> None:
         server._set_version_creation_enabled(True)
         mock = AsyncMock(return_value={"id": 1, "message": "created"})
-        with patch.object(
-            server.VersionsApi,
-            "post_version_with_url_organizations_organization_id_projects_project_id_versions_url_post",  # noqa: E501
-            mock,
-        ), self.assertRaises(RuntimeError) as cm:
+        with (
+            patch.object(
+                server.VersionsApi,
+                "post_version_with_url_organizations_organization_id_projects_project_id_versions_url_post",  # noqa: E501
+                mock,
+            ),
+            self.assertRaises(RuntimeError) as cm,
+        ):
             await server.create_version_from_url(
                 organization_id=1,
                 project_id=999,
@@ -299,11 +335,14 @@ class TestStepCodePrivacy(unittest.IsolatedAsyncioTestCase):
         import ah_mcp.audit as audit_mod
 
         step_code = "../../../etc/passwd"
-        with patch.object(
-            server.TasksApi,
-            "get_output_organizations_organization_id_tasks_task_id_step_code_output_get",
-            AsyncMock(return_value=[]),
-        ), patch.object(audit_mod.logger, "info") as mock_info:
+        with (
+            patch.object(
+                server.TasksApi,
+                "get_output_organizations_organization_id_tasks_task_id_step_code_output_get",
+                AsyncMock(return_value=[]),
+            ),
+            patch.object(audit_mod.logger, "info") as mock_info,
+        ):
             await server.get_task_logs(organization_id=1, task_id=1, step_code=step_code)
         for call in mock_info.call_args_list:
             args = " ".join(str(arg) for arg in call.args)
@@ -331,11 +370,14 @@ class TestArtifactPrivacy(unittest.IsolatedAsyncioTestCase):
 
         artifact_id = "SECRET_ARTIFACT_ID"
         response = SimpleNamespace(raw_data=b"artifact", headers={"content-type": "text/plain"})
-        with patch.object(
-            server.TasksApi,
-            "get_artifact_organizations_organization_id_tasks_task_id_artifacts_artifact_id_get_with_http_info",  # noqa: E501
-            AsyncMock(return_value=response),
-        ), patch.object(audit_mod.logger, "info") as mock_info:
+        with (
+            patch.object(
+                server.TasksApi,
+                "get_artifact_organizations_organization_id_tasks_task_id_artifacts_artifact_id_get_with_http_info",  # noqa: E501
+                AsyncMock(return_value=response),
+            ),
+            patch.object(audit_mod.logger, "info") as mock_info,
+        ):
             await server.get_task_artifact(
                 organization_id=1,
                 task_id=1,
@@ -370,11 +412,14 @@ class TestOrCaTaskPrivacy(unittest.IsolatedAsyncioTestCase):
     async def test_orca_payload_not_in_audit_log(self) -> None:
         import ah_mcp.audit as audit_mod
 
-        with patch.object(
-            server.ToolsApi,
-            "post_tool_orca_organizations_organization_id_projects_project_id_versions_version_id_tools_orca_post",  # noqa: E501
-            AsyncMock(return_value={"task_id": 1, "message": "created"}),
-        ), patch.object(audit_mod.logger, "info") as mock_info:
+        with (
+            patch.object(
+                server.ToolsApi,
+                "post_tool_orca_organizations_organization_id_projects_project_id_versions_version_id_tools_orca_post",  # noqa: E501
+                AsyncMock(return_value={"task_id": 1, "message": "created"}),
+            ),
+            patch.object(audit_mod.logger, "info") as mock_info,
+        ):
             await server.run_orca_task(
                 organization_id=1,
                 project_id=10,
@@ -389,11 +434,15 @@ class TestOrCaTaskPrivacy(unittest.IsolatedAsyncioTestCase):
     async def test_orca_payload_not_in_error_log(self) -> None:
         import ah_mcp.audit as audit_mod
 
-        with patch.object(
-            server.ToolsApi,
-            "post_tool_orca_organizations_organization_id_projects_project_id_versions_version_id_tools_orca_post",  # noqa: E501
-            AsyncMock(side_effect=ValueError("SECRET_SPEC_CONTENT SECRET_HINT_CONTENT")),
-        ), patch.object(audit_mod.logger, "error") as mock_error, self.assertRaises(RuntimeError):
+        with (
+            patch.object(
+                server.ToolsApi,
+                "post_tool_orca_organizations_organization_id_projects_project_id_versions_version_id_tools_orca_post",  # noqa: E501
+                AsyncMock(side_effect=ValueError("SECRET_SPEC_CONTENT SECRET_HINT_CONTENT")),
+            ),
+            patch.object(audit_mod.logger, "error") as mock_error,
+            self.assertRaises(RuntimeError),
+        ):
             await server.run_orca_task(
                 organization_id=1,
                 project_id=10,
@@ -430,11 +479,14 @@ class TestVersionCreationPrivacy(unittest.IsolatedAsyncioTestCase):
         import ah_mcp.audit as audit_mod
 
         url = "https://example.com/private/archive.zip?token=SECRET_URL_TOKEN"
-        with patch.object(
-            server.VersionsApi,
-            "post_version_with_url_organizations_organization_id_projects_project_id_versions_url_post",  # noqa: E501
-            AsyncMock(return_value={"id": 1, "message": "created"}),
-        ), patch.object(audit_mod.logger, "info") as mock_info:
+        with (
+            patch.object(
+                server.VersionsApi,
+                "post_version_with_url_organizations_organization_id_projects_project_id_versions_url_post",  # noqa: E501
+                AsyncMock(return_value={"id": 1, "message": "created"}),
+            ),
+            patch.object(audit_mod.logger, "info") as mock_info,
+        ):
             await server.create_version_from_url(
                 organization_id=1,
                 project_id=10,
@@ -453,11 +505,14 @@ class TestVersionCreationPrivacy(unittest.IsolatedAsyncioTestCase):
         import ah_mcp.audit as audit_mod
 
         archive = "SECRET_ARCHIVE_CONTENTS"
-        with patch.object(
-            server,
-            "_create_version_from_archive_with_client",
-            AsyncMock(return_value={"id": 1, "message": "created"}),
-        ), patch.object(audit_mod.logger, "info") as mock_info:
+        with (
+            patch.object(
+                server,
+                "_create_version_from_archive_with_client",
+                AsyncMock(return_value={"id": 1, "message": "created"}),
+            ),
+            patch.object(audit_mod.logger, "info") as mock_info,
+        ):
             await server.create_version_from_archive(
                 organization_id=1,
                 project_id=10,

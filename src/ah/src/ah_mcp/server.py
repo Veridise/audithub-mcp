@@ -294,8 +294,7 @@ def _task_artifacts(task: Task) -> list[TaskArtifact]:
     if task.artifacts is None:
         return []
     return [
-        TaskArtifact.model_validate(artifact, from_attributes=True)
-        for artifact in task.artifacts
+        TaskArtifact.model_validate(artifact, from_attributes=True) for artifact in task.artifacts
     ]
 
 
@@ -413,7 +412,9 @@ async def get_project(organization_id: _AhId, project_id: _AhId) -> Project:
         _assert_org_allowed(organization_id)
         _assert_project_allowed(project_id)
         project = await _with_api_client(
-            lambda client: ProjectsApi(client).get_project_organizations_organization_id_projects_project_id_get(  # noqa: E501
+            lambda client: ProjectsApi(
+                client
+            ).get_project_organizations_organization_id_projects_project_id_get(  # noqa: E501
                 organization_id=organization_id,
                 project_id=project_id,
             )
@@ -436,7 +437,9 @@ async def get_project_name_index(organization_id: _AhId) -> list[ProjectNameInde
 
         async def _fetch_project(project_id: int) -> Project:
             project = await _with_api_client(
-                lambda client: ProjectsApi(client).get_project_organizations_organization_id_projects_project_id_get(  # noqa: E501
+                lambda client: ProjectsApi(
+                    client
+                ).get_project_organizations_organization_id_projects_project_id_get(  # noqa: E501
                     organization_id=organization_id,
                     project_id=project_id,
                 )
@@ -476,7 +479,9 @@ async def get_latest_version(organization_id: _AhId, project_id: _AhId) -> Versi
         _assert_org_allowed(organization_id)
         _assert_project_allowed(project_id)
         version = await _with_api_client(
-            lambda client: VersionsApi(client).get_latest_version_organizations_organization_id_projects_project_id_versions_latest_get(  # noqa: E501
+            lambda client: VersionsApi(
+                client
+            ).get_latest_version_organizations_organization_id_projects_project_id_versions_latest_get(  # noqa: E501
                 organization_id=organization_id,
                 project_id=project_id,
             )
@@ -500,7 +505,9 @@ async def get_version_name_index(
         _assert_org_allowed(organization_id)
         _assert_project_allowed(project_id)
         versions = await _with_api_client(
-            lambda client: VersionsApi(client).get_versions_organizations_organization_id_projects_project_id_versions_get(  # noqa: E501
+            lambda client: VersionsApi(
+                client
+            ).get_versions_organizations_organization_id_projects_project_id_versions_get(  # noqa: E501
                 organization_id=organization_id,
                 project_id=project_id,
             )
@@ -529,7 +536,9 @@ async def get_task_info(organization_id: _AhId, task_id: _AhId) -> Task:
     async def _run() -> Task:
         _assert_org_allowed(organization_id)
         task = await _with_api_client(
-            lambda client: TasksApi(client).get_info_organizations_organization_id_tasks_task_id_get(  # noqa: E501
+            lambda client: TasksApi(
+                client
+            ).get_info_organizations_organization_id_tasks_task_id_get(  # noqa: E501
                 organization_id=organization_id,
                 task_id=task_id,
             )
@@ -550,7 +559,9 @@ async def get_task_artifacts(organization_id: _AhId, task_id: _AhId) -> list[Tas
     async def _run() -> list[TaskArtifact]:
         _assert_org_allowed(organization_id)
         task = await _with_api_client(
-            lambda client: TasksApi(client).get_info_organizations_organization_id_tasks_task_id_get(  # noqa: E501
+            lambda client: TasksApi(
+                client
+            ).get_info_organizations_organization_id_tasks_task_id_get(  # noqa: E501
                 organization_id=organization_id,
                 task_id=task_id,
             )
@@ -576,7 +587,9 @@ async def get_task_artifact(
     async def _run() -> TaskArtifactContent:
         _assert_org_allowed(organization_id)
         response = await _with_api_client(
-            lambda client: TasksApi(client).get_artifact_organizations_organization_id_tasks_task_id_artifacts_artifact_id_get_with_http_info(  # noqa: E501
+            lambda client: TasksApi(
+                client
+            ).get_artifact_organizations_organization_id_tasks_task_id_artifacts_artifact_id_get_with_http_info(  # noqa: E501
                 organization_id=organization_id,
                 task_id=task_id,
                 artifact_id=artifact_id,
@@ -612,7 +625,9 @@ async def get_task_logs(organization_id: _AhId, task_id: _AhId, step_code: str) 
     async def _run() -> list[str]:
         _assert_org_allowed(organization_id)
         logs = await _with_api_client(
-            lambda client: TasksApi(client).get_output_organizations_organization_id_tasks_task_id_step_code_output_get(  # noqa: E501
+            lambda client: TasksApi(
+                client
+            ).get_output_organizations_organization_id_tasks_task_id_step_code_output_get(  # noqa: E501
                 organization_id=organization_id,
                 task_id=task_id,
                 step_code=step_code,
@@ -634,7 +649,9 @@ async def get_task_findings(organization_id: _AhId, task_id: _AhId) -> list[FIOD
     async def _run() -> list[FIOData]:
         _assert_org_allowed(organization_id)
         findings = await _with_api_client(
-            lambda client: TasksApi(client).get_task_findings_organizations_organization_id_tasks_task_id_findings_get(  # noqa: E501
+            lambda client: TasksApi(
+                client
+            ).get_task_findings_organizations_organization_id_tasks_task_id_findings_get(  # noqa: E501
                 organization_id=organization_id,
                 task_id=task_id,
             )
@@ -656,18 +673,20 @@ async def get_version_comments(
     limit: Annotated[int, Field(ge=0)] | None = 200,
     offset: Annotated[int, Field(ge=0)] | None = 0,
 ) -> list[Comment]:
-    """Get comments for a specific project version. Use this only to aggregate comments 
-       at the version level, if you are looking for a specific thread id use 
-       get_thread_comments instead.
+    """Get comments for a specific project version. Use this only to aggregate comments
+    at the version level, if you are looking for a specific thread id use
+    get_thread_comments instead.
 
-       This can return large objects, prefer pagination to avoid truncation by MCP."""
+    This can return large objects, prefer pagination to avoid truncation by MCP."""
 
     async def _run() -> list[Comment]:
         _build_pagination_params(limit, offset)
         _assert_org_allowed(organization_id)
         _assert_project_allowed(project_id)
         comments = await _with_api_client(
-            lambda client: VersionsApi(client).get_version_comments_organizations_organization_id_projects_project_id_versions_version_id_comments_get(  # noqa: E501
+            lambda client: VersionsApi(
+                client
+            ).get_version_comments_organizations_organization_id_projects_project_id_versions_version_id_comments_get(  # noqa: E501
                 organization_id=organization_id,
                 project_id=project_id,
                 version_id=version_id,
@@ -705,7 +724,9 @@ async def get_version_comment_threads(
         _assert_org_allowed(organization_id)
         _assert_project_allowed(project_id)
         threads = await _with_api_client(
-            lambda client: VersionsApi(client).get_version_comment_threads_organizations_organization_id_projects_project_id_versions_version_id_comment_threads_get(  # noqa: E501
+            lambda client: VersionsApi(
+                client
+            ).get_version_comment_threads_organizations_organization_id_projects_project_id_versions_version_id_comment_threads_get(  # noqa: E501
                 organization_id=organization_id,
                 project_id=project_id,
                 version_id=version_id,
@@ -736,14 +757,16 @@ async def get_thread_comments(
     offset: Annotated[int, Field(ge=0)] | None = 0,
 ) -> list[Comment]:
     """Get comments for a specific thread within a project version.
-       This can return large objects, prefer pagination to avoid truncation by MCP."""
+    This can return large objects, prefer pagination to avoid truncation by MCP."""
 
     async def _run() -> list[Comment]:
         _build_pagination_params(limit, offset)
         _assert_org_allowed(organization_id)
         _assert_project_allowed(project_id)
         comments = await _with_api_client(
-            lambda client: VersionsApi(client).get_version_comments_organizations_organization_id_projects_project_id_versions_version_id_comments_get(  # noqa: E501
+            lambda client: VersionsApi(
+                client
+            ).get_version_comments_organizations_organization_id_projects_project_id_versions_version_id_comments_get(  # noqa: E501
                 organization_id=organization_id,
                 project_id=project_id,
                 version_id=version_id,
@@ -782,7 +805,9 @@ async def get_project_issues(
         _assert_org_allowed(organization_id)
         _assert_project_allowed(project_id)
         issues = await _with_api_client(
-            lambda client: IssuesApi(client).get_issues_organizations_organization_id_projects_project_id_issues_get(  # noqa: E501
+            lambda client: IssuesApi(
+                client
+            ).get_issues_organizations_organization_id_projects_project_id_issues_get(  # noqa: E501
                 organization_id=organization_id,
                 project_id=project_id,
             )
@@ -811,7 +836,9 @@ async def get_project_issue(
         _assert_org_allowed(organization_id)
         _assert_project_allowed(project_id)
         issue = await _with_api_client(
-            lambda client: IssuesApi(client).get_issue_organizations_organization_id_projects_project_id_issues_issue_id_get(  # noqa: E501
+            lambda client: IssuesApi(
+                client
+            ).get_issue_organizations_organization_id_projects_project_id_issues_issue_id_get(  # noqa: E501
                 organization_id=organization_id,
                 project_id=project_id,
                 issue_id=issue_id,
@@ -838,17 +865,19 @@ async def get_project_comments(
     offset: Annotated[int, Field(ge=0)] | None = 0,
 ) -> list[Comment]:
     """Get all comments for an AuditHub project across all versions. Use this only to
-       aggregate comments at the project level, if you are looking for a specific thread
-       id use get_thread_comments instead.
-       
-       This can return large objects, prefer pagination to avoid truncation by MCP."""
+    aggregate comments at the project level, if you are looking for a specific thread
+    id use get_thread_comments instead.
+
+    This can return large objects, prefer pagination to avoid truncation by MCP."""
 
     async def _run() -> list[Comment]:
         _build_pagination_params(limit, offset)
         _assert_org_allowed(organization_id)
         _assert_project_allowed(project_id)
         comments = await _with_api_client(
-            lambda client: ProjectsApi(client).get_project_comments_organizations_organization_id_projects_project_id_comments_get(  # noqa: E501
+            lambda client: ProjectsApi(
+                client
+            ).get_project_comments_organizations_organization_id_projects_project_id_comments_get(  # noqa: E501
                 organization_id=organization_id,
                 project_id=project_id,
                 limit=200 if limit is None else limit,
@@ -1110,16 +1139,14 @@ def main() -> None:
         "--allowed-org-ids",
         metavar="IDS",
         help=(
-            "Comma-separated organization IDs the server may access "
-            "(overrides AH_ALLOWED_ORG_IDS)."
+            "Comma-separated organization IDs the server may access (overrides AH_ALLOWED_ORG_IDS)."
         ),
     )
     parser.add_argument(
         "--allowed-project-ids",
         metavar="IDS",
         help=(
-            "Comma-separated project IDs the server may access "
-            "(overrides AH_ALLOWED_PROJECT_IDS)."
+            "Comma-separated project IDs the server may access (overrides AH_ALLOWED_PROJECT_IDS)."
         ),
     )
     parser.add_argument(

@@ -76,9 +76,7 @@ def test_list_version_name_index() -> None:
 
 def test_list_issues() -> None:
     issues = _run(
-        server.get_project_issues(
-            organization_id=_ORG_ID, project_id=_PROJECT_ID, limit=10
-        )
+        server.get_project_issues(organization_id=_ORG_ID, project_id=_PROJECT_ID, limit=10)
     )
     assert isinstance(issues, list)
     assert all(isinstance(issue, IssueForList) for issue in issues)
@@ -100,9 +98,7 @@ def test_get_issue_if_present() -> None:
 
 def test_list_project_comments() -> None:
     comments = _run(
-        server.get_project_comments(
-            organization_id=_ORG_ID, project_id=_PROJECT_ID, limit=10
-        )
+        server.get_project_comments(organization_id=_ORG_ID, project_id=_PROJECT_ID, limit=10)
     )
     assert isinstance(comments, list)
     assert all(isinstance(comment, Comment) for comment in comments)

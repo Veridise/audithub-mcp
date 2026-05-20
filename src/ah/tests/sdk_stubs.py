@@ -210,9 +210,12 @@ class OrCaInput(_BaseSdkModel):
     specs_override: list[
         RootModelListUnionVSpecFromVersionVSpecFromStandardLibraryVSpecFromOrganizationLibraryVSpecAdHocInner  # noqa: E501
     ]
-    hints_override: list[
-        RootModelListUnionHintFromVersionHintFromStandardLibraryHintFromOrganizationLibraryHintAdHocInner  # noqa: E501
-    ] | None = None
+    hints_override: (
+        list[
+            RootModelListUnionHintFromVersionHintFromStandardLibraryHintFromOrganizationLibraryHintAdHocInner  # noqa: E501
+        ]
+        | None
+    ) = None
     deployment_script_path_override: str | None = None
     on_chain: bool | None = False
     deployment_info_file: str | None = None

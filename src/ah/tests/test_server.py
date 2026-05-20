@@ -581,11 +581,14 @@ class TestToolCalls(unittest.IsolatedAsyncioTestCase):
 
     async def test_get_task_artifact_rejects_oversized_content(self) -> None:
         response = SimpleNamespace(raw_data=b"abcd", headers={})
-        with patch.object(
-            server.TasksApi,
-            "get_artifact_organizations_organization_id_tasks_task_id_artifacts_artifact_id_get_with_http_info",  # noqa: E501
-            AsyncMock(return_value=response),
-        ), self.assertRaises(RuntimeError) as cm:
+        with (
+            patch.object(
+                server.TasksApi,
+                "get_artifact_organizations_organization_id_tasks_task_id_artifacts_artifact_id_get_with_http_info",  # noqa: E501
+                AsyncMock(return_value=response),
+            ),
+            self.assertRaises(RuntimeError) as cm,
+        ):
             await server.get_task_artifact(
                 organization_id=1,
                 task_id=99,
@@ -615,11 +618,14 @@ class TestToolCalls(unittest.IsolatedAsyncioTestCase):
 
     async def test_run_orca_task_disabled_prevents_sdk_call(self) -> None:
         mock = AsyncMock(return_value=_TASK_CREATION_DICT)
-        with patch.object(
-            server.ToolsApi,
-            "post_tool_orca_organizations_organization_id_projects_project_id_versions_version_id_tools_orca_post",  # noqa: E501
-            mock,
-        ), self.assertRaises(RuntimeError) as cm:
+        with (
+            patch.object(
+                server.ToolsApi,
+                "post_tool_orca_organizations_organization_id_projects_project_id_versions_version_id_tools_orca_post",  # noqa: E501
+                mock,
+            ),
+            self.assertRaises(RuntimeError) as cm,
+        ):
             await server.run_orca_task(
                 organization_id=1,
                 project_id=10,
@@ -657,11 +663,14 @@ class TestToolCalls(unittest.IsolatedAsyncioTestCase):
 
     async def test_create_version_from_url_disabled_prevents_sdk_call(self) -> None:
         mock = AsyncMock(return_value=_VERSION_CREATION_DICT)
-        with patch.object(
-            server.VersionsApi,
-            "post_version_with_url_organizations_organization_id_projects_project_id_versions_url_post",  # noqa: E501
-            mock,
-        ), self.assertRaises(RuntimeError) as cm:
+        with (
+            patch.object(
+                server.VersionsApi,
+                "post_version_with_url_organizations_organization_id_projects_project_id_versions_url_post",  # noqa: E501
+                mock,
+            ),
+            self.assertRaises(RuntimeError) as cm,
+        ):
             await server.create_version_from_url(
                 organization_id=1,
                 project_id=10,
@@ -677,11 +686,14 @@ class TestToolCalls(unittest.IsolatedAsyncioTestCase):
 
     async def test_create_version_from_archive_disabled_prevents_sdk_call(self) -> None:
         mock = AsyncMock(return_value=_VERSION_CREATION_DICT)
-        with patch.object(
-            server,
-            "_create_version_from_archive_with_client",
-            mock,
-        ), self.assertRaises(RuntimeError) as cm:
+        with (
+            patch.object(
+                server,
+                "_create_version_from_archive_with_client",
+                mock,
+            ),
+            self.assertRaises(RuntimeError) as cm,
+        ):
             await server.create_version_from_archive(
                 organization_id=1,
                 project_id=10,
@@ -896,52 +908,67 @@ class TestToolCalls(unittest.IsolatedAsyncioTestCase):
 
     async def test_allowlist_rejection_prevents_sdk_call(self) -> None:
         mock = AsyncMock(return_value=[_ISSUE_LIST_DICT])
-        with patch.object(
-            server.IssuesApi,
-            "get_issues_organizations_organization_id_projects_project_id_issues_get",
-            mock,
-        ), self.assertRaises(RuntimeError):
+        with (
+            patch.object(
+                server.IssuesApi,
+                "get_issues_organizations_organization_id_projects_project_id_issues_get",
+                mock,
+            ),
+            self.assertRaises(RuntimeError),
+        ):
             await server.get_project_issues(organization_id=99, project_id=10)
         mock.assert_not_awaited()
 
     async def test_get_project_name_index_rejection_prevents_sdk_call(self) -> None:
         mock = AsyncMock(return_value=[_PROJECT_DICT])
-        with patch.object(
-            server.ProjectsApi,
-            "get_project_organizations_organization_id_projects_project_id_get",
-            mock,
-        ), self.assertRaises(RuntimeError):
+        with (
+            patch.object(
+                server.ProjectsApi,
+                "get_project_organizations_organization_id_projects_project_id_get",
+                mock,
+            ),
+            self.assertRaises(RuntimeError),
+        ):
             await server.get_project_name_index(organization_id=99)
         mock.assert_not_awaited()
 
     async def test_get_version_name_index_rejection_prevents_sdk_call(self) -> None:
         mock = AsyncMock(return_value=[_VERSION_DICT])
-        with patch.object(
-            server.VersionsApi,
-            "get_versions_organizations_organization_id_projects_project_id_versions_get",
-            mock,
-        ), self.assertRaises(RuntimeError):
+        with (
+            patch.object(
+                server.VersionsApi,
+                "get_versions_organizations_organization_id_projects_project_id_versions_get",
+                mock,
+            ),
+            self.assertRaises(RuntimeError),
+        ):
             await server.get_version_name_index(organization_id=1, project_id=99)
         mock.assert_not_awaited()
 
     async def test_get_thread_comments_rejection_prevents_sdk_call(self) -> None:
         mock = AsyncMock(return_value=[_COMMENT_DICT])
-        with patch.object(
-            server.VersionsApi,
-            "get_version_comments_organizations_organization_id_projects_project_id_versions_version_id_comments_get",  # noqa: E501
-            mock,
-        ), self.assertRaises(RuntimeError):
+        with (
+            patch.object(
+                server.VersionsApi,
+                "get_version_comments_organizations_organization_id_projects_project_id_versions_version_id_comments_get",  # noqa: E501
+                mock,
+            ),
+            self.assertRaises(RuntimeError),
+        ):
             await server.get_thread_comments(
                 organization_id=99, project_id=10, version_id=3, thread_id=7
             )
         mock.assert_not_awaited()
 
     async def test_non_runtime_error_is_sanitized(self) -> None:
-        with patch.object(
-            server.UsersApi,
-            "get_organizations_users_myorganizations_get",
-            AsyncMock(side_effect=OSError("network secret")),
-        ), self.assertRaises(RuntimeError) as cm:
+        with (
+            patch.object(
+                server.UsersApi,
+                "get_organizations_users_myorganizations_get",
+                AsyncMock(side_effect=OSError("network secret")),
+            ),
+            self.assertRaises(RuntimeError) as cm,
+        ):
             await server.get_my_organizations()
         self.assertNotIn("network secret", str(cm.exception))
 
