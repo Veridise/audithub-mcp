@@ -1,81 +1,22 @@
-# Agents
+# AI Agent Instructions
 
-Instructions for AI agents (Codex, ChatGPT, and others) working in this repository.
+Instructions for AI agents working in this repository.
 
-## Repository purpose
+Repository-wide project details: `./doc/architecture.md`
+Coding conventions: `./doc/conventions.md`
 
-Monorepo of MCP servers for Veridise tooling. Each server exposes a Veridise data source via the Model Context Protocol. Servers are read-only by default unless a server documents an explicit opt-in mutation mode.
+## Project Structure
 
-## Structure
+- Treat each MCP server under `src/<server>/` as independent; avoid changes that
+  can break unrelated servers.
+- Tests belong in `src/<server>/tests`
 
-Each server lives in `src/<name>/` as a self-contained Python package with its own `pyproject.toml`, tests, and configuration.
+## Development Instructions
 
-## Tooling
-
-- Python 3.12+
-- `uv` (not pip or poetry) for dependency management
-- `ruff` for linting and formatting
-- `mypy` (strict mode) for type checking
-- `pytest` for test runner
-
-## Security invariants
-
-These are non-negotiable. Every server must satisfy all four:
-
-1. **Default read-only tool surface**: default tools start with `get_`. Mutation tools require an explicit opt-in gate and must be narrowly scoped.
-2. **Default GET-only HTTP**: no POST/PUT/PATCH/DELETE paths unless a server documents an opt-in mutation mode. Admin endpoints remain forbidden.
-3. **Credential isolation**: secrets come from environment variables, read once at startup. Never include credentials in tool output, error messages, or logs.
-4. **ID allowlisting**: access is restricted to explicitly configured IDs. Reject disallowed IDs before making any network request. Error messages must not enumerate the full allowlist.
-
-## Python coding standards
-
-- Use domain types, not primitives: define Pydantic models, dataclasses, NamedTuples, or newtypes instead of raw `str`, `dict`, `tuple`, `list`. If the object has semantic meaning (an org ID, a comment, a project), it gets a type.
-- `dict` is for genuinely unstructured key-value data (e.g. JSON passthrough). `tuple` is for fixed-length heterogeneous sequences. `str` is for actual text. Don't use them as poor-man's structs.
-- Type every function signature -- parameters and return types. Use `Annotated[...]` with `Field()` constraints where the type has bounds (e.g. positive int IDs).
-- Prefer `TypeAdapter` for validating list/union responses from external APIs.
-- No `Any` unless interfacing with genuinely untyped external data -- add a comment explaining why.
-- Absolute imports only -- no relative (`..`) paths.
-- Google-style docstrings on public APIs.
-- 100-char line length.
-
-## Working rules
-
-- Each server is independent: changes to one should not break another.
-- Use `uv` for all Python dependency operations.
-- Run `ruff check`, `mypy`, and `pytest` before committing.
-
-## Per-server dev workflow
-
-```bash
-cd src/<name>
-uv venv && uv pip install -e ".[dev]"
-ruff check src tests
-mypy
-pytest
-```
-
-## Adding a new server
-
-1. Create `src/<name>/` directory.
-2. Add `pyproject.toml` with `mcp>=1.0.0` dependency.
-3. Add `.python-version` file.
-4. Implement tools following the security invariants above.
-5. Add security tests (read-only surface, allowlist enforcement, credential isolation).
-6. Update root `README.md` server table.
-7. Add the server to the CI matrix in `.github/workflows/python.yml`.
-
-## Testing
-
-Tests stub private libraries via `sys.modules` so they run in CI without proprietary dependencies. Test security properties explicitly:
-
-- Default read-only tool surface and any opt-in mutation gates
-- Allowlist enforcement (disallowed IDs rejected before network calls)
-- Credential isolation (exceptions sanitized, secrets not in output)
-
-## Do not
-
-- Add mutation tools (POST/PUT/PATCH/DELETE) without an explicit opt-in gate and security tests.
-- Install private libraries in CI.
-- Use relative imports.
-- Use raw `dict`/`str`/`tuple` for domain objects.
-- Skip security tests when adding new tools.
+- Check that the virtual environment is active (in `VIRTUAL_ENV` environment
+  variable) before running any commands.
+  Otherwise, stop and refuse to do anything.
+- Do not attempt to manage dependencies (install packages, etc.) unless explicitly asked to.
+- Run `ruff check`, `mypy`, and `pytest` after functional changes.
+- Format code with `ruff format`
+- Update relevant files in `docs/` after making major changes.

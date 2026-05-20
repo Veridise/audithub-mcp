@@ -142,11 +142,8 @@ ID-based tools.
 - **ID allowlisting.** The server refuses to access any organization or project whose numeric ID was not explicitly included in `AH_ALLOWED_ORG_IDS` / `AH_ALLOWED_PROJECT_IDS`. The check runs before any network request.
 - **SDK-only transport.** All AuditHub interaction flows through `audithub-sdk` and `audithub_sdk_ext`; there is no raw HTTP helper in the MCP server.
 
-## Development
+## Development Workflow
 
-```bash
-make help       # list all targets
-make dev-install
-make test
-make check      # lint + type-check
-```
+* Run tests: `pytest`
+* Type check: `mypy .`
+* Format code: `ruff format`
