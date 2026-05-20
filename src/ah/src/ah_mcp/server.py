@@ -12,11 +12,8 @@ from __future__ import annotations
 import argparse
 import base64
 import inspect
-import os
-import sys
 import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from dataclasses import dataclass
 from typing import Annotated
 
 import audithub_sdk
@@ -47,6 +44,7 @@ from audithub_sdk_ext import AuthenticatedApiClient, OIDCClientCredentialsContex
 from mcp.server.fastmcp import FastMCP
 from pydantic import Field, TypeAdapter
 
+from ah_mcp import config as server_config
 from ah_mcp.audit import log_call_error, log_call_start, log_call_success
 from ah_mcp.models import (
     Comment,
@@ -81,26 +79,27 @@ from ah_mcp.models import (
     VersionNameIndexEntry,
 )
 
-_AhId = Annotated[int, Field(strict=True, gt=0)]
-_ArtifactId = Annotated[str, Field(min_length=1)]
-_MaxBytes = Annotated[int, Field(strict=True, gt=0)]
+_AhId = server_config._AhId
+_ArtifactId = server_config._ArtifactId
+_MaxBytes = server_config._MaxBytes
+_REQUIRED_ENV_VARS = server_config._REQUIRED_ENV_VARS
+_DEFAULT_ARTIFACT_MAX_BYTES = server_config._DEFAULT_ARTIFACT_MAX_BYTES
+_TASK_RUN_TOOL_NAME = server_config._TASK_RUN_TOOL_NAME
+_VERSION_CREATION_TOOL_NAMES = server_config._VERSION_CREATION_TOOL_NAMES
+AuditHubSdkContext = server_config.AuditHubSdkContext
+_build_context = server_config._build_context
+AuditHubServerConfig = server_config.AuditHubServerConfig
+load_server_config = server_config.load_server_config
+validate_startup_config = server_config.validate_startup_config
+
+__all__ = [
+    "AuditHubServerConfig",
+    "AuditHubSdkContext",
+    "OIDCClientCredentialsContext",
+    "audithub_sdk",
+]
 
 mcp = FastMCP("ah")
-
-_REQUIRED_ENV_VARS: tuple[str, ...] = (
-    "AUDITHUB_BASE_URL",
-    "AUDITHUB_OIDC_CONFIGURATION_URL",
-    "AUDITHUB_OIDC_CLIENT_ID",
-    "AUDITHUB_OIDC_CLIENT_SECRET",
-)
-
-
-@dataclass(frozen=True)
-class AuditHubSdkContext:
-    """Static SDK configuration derived from environment variables at startup."""
-
-    configuration: audithub_sdk.Configuration
-    auth_context: OIDCClientCredentialsContext
 
 
 _context: AuditHubSdkContext | None = None
@@ -120,43 +119,12 @@ _str_list_ta = TypeAdapter(list[str])
 _orca_task_creation_ta = TypeAdapter(TaskCreation)
 _version_creation_ta = TypeAdapter(VersionCreation)
 
-_DEFAULT_ARTIFACT_MAX_BYTES = 5 * 1024 * 1024
-
-_TASK_RUN_TOOL_NAME = "run_orca_task"
-_VERSION_CREATION_TOOL_NAMES = (
-    "create_version_from_archive",
-    "create_version_from_url",
-)
 _SdkOrCaSpecActual = (
     VSpecFromVersion | VSpecFromStandardLibrary | VSpecFromOrganizationLibrary | VSpecAdHoc
 )
 _SdkOrCaHintActual = (
     HintFromVersion | HintFromStandardLibrary | HintFromOrganizationLibrary | HintAdHoc
 )
-
-
-def _parse_id_list(value: str, flag: str) -> frozenset[int]:
-    """Parse a comma-separated string of positive integers into a frozenset."""
-    try:
-        ids = frozenset(int(tok.strip()) for tok in value.split(",") if tok.strip())
-    except ValueError:
-        sys.exit(f"Error: {flag} must be a comma-separated list of integers, got: {value!r}")
-    non_positive = [item for item in ids if item <= 0]
-    if non_positive:
-        sys.exit(f"Error: {flag} contains non-positive IDs: {sorted(non_positive)}")
-    return ids
-
-
-def _parse_bool_flag(value: str | None, flag: str) -> bool:
-    """Parse an optional boolean environment flag."""
-    if value is None or value == "":
-        return False
-    normalized = value.strip().casefold()
-    if normalized in {"1", "true", "yes", "on"}:
-        return True
-    if normalized in {"0", "false", "no", "off"}:
-        return False
-    sys.exit(f"Error: {flag} must be one of 1/0, true/false, yes/no, or on/off.")
 
 
 def _is_tool_registered(tool_name: str) -> bool:
@@ -210,19 +178,64 @@ def _assert_version_creation_enabled() -> None:
         )
 
 
-def _build_context() -> AuditHubSdkContext:
-    """Read AuditHub SDK/auth configuration from environment variables."""
-    missing = [v for v in _REQUIRED_ENV_VARS if not os.environ.get(v)]
-    if missing:
-        raise RuntimeError(f"Missing required environment variables: {', '.join(missing)}")
-
-    configuration = audithub_sdk.Configuration(host=os.environ["AUDITHUB_BASE_URL"])
-    auth_context = OIDCClientCredentialsContext(
-        oidc_configuration_url=os.environ["AUDITHUB_OIDC_CONFIGURATION_URL"],
-        client_id=os.environ["AUDITHUB_OIDC_CLIENT_ID"],
-        client_secret=os.environ["AUDITHUB_OIDC_CLIENT_SECRET"],
+def _build_arg_parser() -> argparse.ArgumentParser:
+    """Build the CLI parser for the AuditHub MCP server."""
+    parser = argparse.ArgumentParser(
+        description="AuditHub MCP server",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    return AuditHubSdkContext(configuration=configuration, auth_context=auth_context)
+    parser.add_argument(
+        "--allowed-org-ids",
+        metavar="IDS",
+        help=(
+            "Comma-separated organization IDs the server may access (overrides AH_ALLOWED_ORG_IDS)."
+        ),
+    )
+    parser.add_argument(
+        "--allowed-project-ids",
+        metavar="IDS",
+        help=(
+            "Comma-separated project IDs the server may access (overrides AH_ALLOWED_PROJECT_IDS)."
+        ),
+    )
+    parser.add_argument(
+        "--enable-task-runs",
+        action="store_true",
+        help="Register opt-in mutation tools that can start AuditHub tasks.",
+    )
+    parser.add_argument(
+        "--enable-version-creation",
+        action="store_true",
+        help="Register opt-in mutation tools that can create AuditHub project versions.",
+    )
+    return parser
+
+
+def _apply_cli_args_to_config(
+    config: AuditHubServerConfig, args: argparse.Namespace
+) -> AuditHubServerConfig:
+    """Overlay parsed CLI arguments onto environment-backed server config."""
+    allowed_org_ids = (
+        config.allowed_org_ids
+        if args.allowed_org_ids is None
+        else server_config._parse_id_list(
+            args.allowed_org_ids, "--allowed-org-ids / AH_ALLOWED_ORG_IDS"
+        )
+    )
+    allowed_project_ids = (
+        config.allowed_project_ids
+        if args.allowed_project_ids is None
+        else server_config._parse_id_list(
+            args.allowed_project_ids, "--allowed-project-ids / AH_ALLOWED_PROJECT_IDS"
+        )
+    )
+    return AuditHubServerConfig(
+        context=config.context,
+        allowed_org_ids=allowed_org_ids,
+        allowed_project_ids=allowed_project_ids,
+        task_runs_enabled=config.task_runs_enabled or args.enable_task_runs,
+        version_creation_enabled=config.version_creation_enabled or args.enable_version_creation,
+    )
 
 
 def _ctx() -> AuditHubSdkContext:
@@ -1131,64 +1144,17 @@ async def _create_version_from_archive_with_client(
 
 def main() -> None:
     """Entry point for the ``ah-mcp`` console script."""
-    parser = argparse.ArgumentParser(
-        description="AuditHub MCP server",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    parser.add_argument(
-        "--allowed-org-ids",
-        metavar="IDS",
-        help=(
-            "Comma-separated organization IDs the server may access (overrides AH_ALLOWED_ORG_IDS)."
-        ),
-    )
-    parser.add_argument(
-        "--allowed-project-ids",
-        metavar="IDS",
-        help=(
-            "Comma-separated project IDs the server may access (overrides AH_ALLOWED_PROJECT_IDS)."
-        ),
-    )
-    parser.add_argument(
-        "--enable-task-runs",
-        action="store_true",
-        help="Register opt-in mutation tools that can start AuditHub tasks.",
-    )
-    parser.add_argument(
-        "--enable-version-creation",
-        action="store_true",
-        help="Register opt-in mutation tools that can create AuditHub project versions.",
-    )
+    parser = _build_arg_parser()
     args, _ = parser.parse_known_args()
-
-    org_ids_raw = args.allowed_org_ids or os.environ.get("AH_ALLOWED_ORG_IDS", "")
-    proj_ids_raw = args.allowed_project_ids or os.environ.get("AH_ALLOWED_PROJECT_IDS", "")
-    task_runs_enabled = args.enable_task_runs or _parse_bool_flag(
-        os.environ.get("AH_ENABLE_TASK_RUNS"), "AH_ENABLE_TASK_RUNS"
-    )
-    version_creation_enabled = args.enable_version_creation or _parse_bool_flag(
-        os.environ.get("AH_ENABLE_VERSION_CREATION"), "AH_ENABLE_VERSION_CREATION"
-    )
-
-    if not org_ids_raw:
-        sys.exit(
-            "Error: allowed organization IDs are required. "
-            "Set --allowed-org-ids or AH_ALLOWED_ORG_IDS."
-        )
-    if not proj_ids_raw:
-        sys.exit(
-            "Error: allowed project IDs are required. "
-            "Set --allowed-project-ids or AH_ALLOWED_PROJECT_IDS."
-        )
+    startup_config = _apply_cli_args_to_config(load_server_config(), args)
+    validate_startup_config(startup_config)
 
     global _allowed_org_ids, _allowed_project_ids, _context
-    _allowed_org_ids = _parse_id_list(org_ids_raw, "--allowed-org-ids / AH_ALLOWED_ORG_IDS")
-    _allowed_project_ids = _parse_id_list(
-        proj_ids_raw, "--allowed-project-ids / AH_ALLOWED_PROJECT_IDS"
-    )
-    _set_task_runs_enabled(task_runs_enabled)
-    _set_version_creation_enabled(version_creation_enabled)
-    _context = _build_context()
+    _allowed_org_ids = startup_config.allowed_org_ids
+    _allowed_project_ids = startup_config.allowed_project_ids
+    _set_task_runs_enabled(startup_config.task_runs_enabled)
+    _set_version_creation_enabled(startup_config.version_creation_enabled)
+    _context = startup_config.context
     mcp.run()
 
 

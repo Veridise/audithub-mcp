@@ -1,0 +1,12 @@
+audithub_base_url: https://example.com/api/v1
+audithub_oidc_configuration_url: https://issuer/.well-known/openid-configuration
+audithub_oidc_client_id: test-client-id
+audithub_oidc_client_secret: test-client-secret
+allowed_org_ids:
+  - 1
+  - 2
+allowed_project_ids:
+  - 10
+  - 20
+enable_task_runs: true
+enable_version_creation: false

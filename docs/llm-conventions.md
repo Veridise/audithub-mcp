@@ -27,6 +27,8 @@ This file contains conventions that LLM agents must follow.
 
 ## Testing
 
+Use `pytest` for unit and integration testing.
+
 Tests stub private libraries via `sys.modules` so they run in CI without
 proprietary dependencies. Test security properties explicitly:
 
