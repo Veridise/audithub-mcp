@@ -20,13 +20,36 @@ uv sync --active
 
 ## Configuration
 
-Copy `src/ah/.env.example` to `src/ah/.env` and fill in your AuditHub credentials.
+See the [config docs](./docs/configuration.md) for details on how to configure
+`ah-mcp`.
 
 ### Configure your agent
 
-All credentials are loaded from your `.env` file — nothing secret goes in the agent config.
+Once you have decided on how to configure `ah-mcp`, you must enable it in your
+agent's MCP configuration file (`.codex/config.json` for Codex,
+`.claude/mcp.json` for Claude Code, or your ChatGPT Desktop MCP config).
 
-Add to your agent's MCP configuration file (`.codex/config.json` for Codex, `.claude/mcp.json` for Claude Code, or your ChatGPT Desktop MCP config):
+For a JSON/YAML file `ah-mcp` config, copy `src/ah/.env.example` to a fixed
+location and fill in the required settings.
+The MCP server config should pass the config directly to `ah-mcp`:
+
+```json
+{
+  "mcpServers": {
+    "ah": {
+      "command": "ah-mcp",
+      "args": [
+        "--config",
+        "/absolute/path/to/your/ah-mcp-config.json"
+      ]
+    }
+  }
+}
+```
+
+To configure `ah-mcp` through environment variables only, copy
+`src/ah/.env.example` to a fixed location and fill in the required settings.
+The MCP server config should load the environment before starting `ah-mcp`:
 
 ```json
 {
@@ -42,7 +65,9 @@ Add to your agent's MCP configuration file (`.codex/config.json` for Codex, `.cl
 }
 ```
 
-Replace `/absolute/path/to/ah.env` with the actual path to your `.env` file (see `src/ah/.env.example`). The `.env` file should contain all credentials and allowlist settings; no secrets belong in the agent config file.
+Replace `/absolute/path/to/ah.env` with the actual path to your `.env` file (see `src/ah/.env.example`).
+The `ah-mcp` configuration should contain all credentials and allowlist
+settings; no secrets should be configured in the agent config file itself.
 
 ## Security model
 

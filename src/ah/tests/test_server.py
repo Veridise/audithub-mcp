@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import sys
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -353,6 +354,68 @@ class TestCtxCache(unittest.TestCase):
             self.assertTrue(server._is_tool_registered("create_version_from_archive"))
             self.assertTrue(server._is_tool_registered("create_version_from_url"))
         finally:
+            server._set_version_creation_enabled(False)
+
+    def test_main_loads_settings_from_config_file_and_env_overrides(self) -> None:
+        config_path = Path(__file__).with_name("dummy_config.yaml")
+        env = {
+            **_FULL_ENV,
+            "AUDITHUB_BASE_URL": "https://override.example/api/v1",
+            "AH_ALLOWED_ORG_IDS": "7,8",
+            "AH_ENABLE_TASK_RUNS": "0",
+            "AH_ENABLE_VERSION_CREATION": "1",
+        }
+        server._context = None
+        argv = ["ah-mcp", "--config", str(config_path)]
+        try:
+            with (
+                patch.dict(os.environ, env, clear=True),
+                patch.object(sys, "argv", argv),
+                patch.object(server.mcp, "run"),
+            ):
+                server.main()
+            self.assertIsNotNone(server._context)
+            self.assertEqual(server._context.configuration.host, "https://override.example/api/v1")
+            self.assertEqual(server._allowed_org_ids, frozenset({7, 8}))
+            self.assertEqual(server._allowed_project_ids, frozenset({10, 20}))
+            self.assertFalse(server._task_runs_enabled)
+            self.assertTrue(server._version_creation_enabled)
+        finally:
+            server._context = None
+            server._allowed_org_ids = frozenset()
+            server._allowed_project_ids = frozenset()
+            server._set_task_runs_enabled(False)
+            server._set_version_creation_enabled(False)
+
+    def test_main_can_disable_env_overrides_for_config_file(self) -> None:
+        config_path = Path(__file__).with_name("dummy_config.yaml")
+        env = {
+            **_FULL_ENV,
+            "AUDITHUB_BASE_URL": "https://override.example/api/v1",
+            "AH_ALLOWED_ORG_IDS": "7,8",
+            "AH_ENABLE_TASK_RUNS": "0",
+            "AH_ENABLE_VERSION_CREATION": "1",
+        }
+        server._context = None
+        argv = ["ah-mcp", "--config", str(config_path), "--no-env-config"]
+        try:
+            with (
+                patch.dict(os.environ, env, clear=True),
+                patch.object(sys, "argv", argv),
+                patch.object(server.mcp, "run"),
+            ):
+                server.main()
+            self.assertIsNotNone(server._context)
+            self.assertEqual(server._context.configuration.host, "https://example.com/api/v1")
+            self.assertEqual(server._allowed_org_ids, frozenset({1, 2}))
+            self.assertEqual(server._allowed_project_ids, frozenset({10, 20}))
+            self.assertTrue(server._task_runs_enabled)
+            self.assertFalse(server._version_creation_enabled)
+        finally:
+            server._context = None
+            server._allowed_org_ids = frozenset()
+            server._allowed_project_ids = frozenset()
+            server._set_task_runs_enabled(False)
             server._set_version_creation_enabled(False)
 
 

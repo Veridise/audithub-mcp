@@ -15,6 +15,7 @@ import inspect
 import sys
 import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
+from pathlib import Path
 from typing import Annotated
 
 import audithub_sdk
@@ -213,8 +214,8 @@ def _load_startup_config() -> AuditHubServerConfig:
         missing_env_vars = _missing_required_env_vars(exc)
         if missing_env_vars:
             raise RuntimeError(
-                "Missing required configuration values; please set the following environment variables: "
-                + ", ".join(missing_env_vars)
+                "Missing required configuration values; please set the following "
+                "environment variables: " + ", ".join(missing_env_vars)
             ) from None
         raise RuntimeError("AuditHub startup configuration is invalid.") from None
 
@@ -224,11 +225,28 @@ def _build_context() -> AuditHubSdkContext:
     return _load_startup_config().context
 
 
+def _load_settings_from_cli_args(args: argparse.Namespace) -> AuditHubServerConfig:
+    """Load settings from CLI-selected sources and translate startup failures."""
+    try:
+        if args.config is None:
+            return _load_startup_config()
+        return server_config.load_config_from_path(
+            Path(args.config), override_from_env_vars=not args.no_env_config
+        )
+    except server_config.StartupConfigError as exc:
+        raise RuntimeError(str(exc)) from None
+
+
 def _build_arg_parser() -> argparse.ArgumentParser:
     """Build the CLI parser for the AuditHub MCP server."""
     parser = argparse.ArgumentParser(
         description="AuditHub MCP server",
         formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "--config",
+        metavar="PATH",
+        help="Load settings from the specified JSON or YAML file",
     )
     parser.add_argument(
         "--allowed-org-ids",
@@ -243,6 +261,11 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         help=(
             "Comma-separated project IDs the server may access (overrides AH_ALLOWED_PROJECT_IDS)."
         ),
+    )
+    parser.add_argument(
+        "--no-env-config",
+        action="store_true",
+        help="Do not allow environment variables to override config file settings",
     )
     parser.add_argument(
         "--enable-task-runs",
@@ -1192,17 +1215,17 @@ def main() -> None:
     try:
         parser = _build_arg_parser()
         args, _ = parser.parse_known_args()
-        startup_config = _apply_cli_args_to_config(_load_startup_config(), args)
-        validate_startup_config(startup_config)
+        settings = _apply_cli_args_to_config(_load_settings_from_cli_args(args), args)
+        validate_startup_config(settings)
     except RuntimeError as exc:
         sys.exit(str(exc))
 
     global _allowed_org_ids, _allowed_project_ids, _context
-    _allowed_org_ids = startup_config.allowed_org_ids
-    _allowed_project_ids = startup_config.allowed_project_ids
-    _set_task_runs_enabled(startup_config.task_runs_enabled)
-    _set_version_creation_enabled(startup_config.version_creation_enabled)
-    _context = startup_config.context
+    _allowed_org_ids = settings.allowed_org_ids
+    _allowed_project_ids = settings.allowed_project_ids
+    _set_task_runs_enabled(settings.task_runs_enabled)
+    _set_version_creation_enabled(settings.version_creation_enabled)
+    _context = settings.context
     mcp.run()
 
 
