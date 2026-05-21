@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import base64
 import inspect
+import sys
 import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from typing import Annotated
@@ -42,7 +43,7 @@ from audithub_sdk.models.v_spec_from_standard_library import VSpecFromStandardLi
 from audithub_sdk.models.v_spec_from_version import VSpecFromVersion
 from audithub_sdk_ext import AuthenticatedApiClient, OIDCClientCredentialsContext
 from mcp.server.fastmcp import FastMCP
-from pydantic import Field, TypeAdapter
+from pydantic import Field, TypeAdapter, ValidationError
 
 from ah_mcp import config as server_config
 from ah_mcp.audit import log_call_error, log_call_start, log_call_success
@@ -82,14 +83,12 @@ from ah_mcp.models import (
 _AhId = server_config._AhId
 _ArtifactId = server_config._ArtifactId
 _MaxBytes = server_config._MaxBytes
-_REQUIRED_ENV_VARS = server_config._REQUIRED_ENV_VARS
 _DEFAULT_ARTIFACT_MAX_BYTES = server_config._DEFAULT_ARTIFACT_MAX_BYTES
 _TASK_RUN_TOOL_NAME = server_config._TASK_RUN_TOOL_NAME
 _VERSION_CREATION_TOOL_NAMES = server_config._VERSION_CREATION_TOOL_NAMES
 AuditHubSdkContext = server_config.AuditHubSdkContext
-_build_context = server_config._build_context
 AuditHubServerConfig = server_config.AuditHubServerConfig
-load_server_config = server_config.load_server_config
+load_config_from_env = server_config.load_config_from_env
 validate_startup_config = server_config.validate_startup_config
 
 __all__ = [
@@ -130,6 +129,34 @@ _SdkOrCaHintActual = (
 def _is_tool_registered(tool_name: str) -> bool:
     """Return whether an MCP tool is currently registered."""
     return tool_name in mcp._tool_manager._tools
+
+
+def _startup_config_env_var_name(field_name: str) -> str | None:
+    """Map a startup config field name to its backing environment variable."""
+    return {
+        "audithub_base_url": "AUDITHUB_BASE_URL",
+        "audithub_oidc_configuration_url": "AUDITHUB_OIDC_CONFIGURATION_URL",
+        "audithub_oidc_client_id": "AUDITHUB_OIDC_CLIENT_ID",
+        "audithub_oidc_client_secret": "AUDITHUB_OIDC_CLIENT_SECRET",
+    }.get(field_name)
+
+
+def _missing_required_env_vars(exc: ValidationError) -> list[str]:
+    """Extract missing startup environment variables from a validation error."""
+    missing_env_vars: list[str] = []
+    for error in exc.errors():
+        error_input = error.get("input")
+        if error_input != "" and not (
+            hasattr(error_input, "get_secret_value") and error_input.get_secret_value() == ""
+        ):
+            continue
+        loc = error.get("loc")
+        if not loc:
+            continue
+        env_var_name = _startup_config_env_var_name(str(loc[0]))
+        if env_var_name is not None:
+            missing_env_vars.append(env_var_name)
+    return sorted(set(missing_env_vars))
 
 
 def _set_task_runs_enabled(enabled: bool) -> None:
@@ -176,6 +203,25 @@ def _assert_version_creation_enabled() -> None:
             "--enable-version-creation or AH_ENABLE_VERSION_CREATION=1 to enable "
             "create_version_from_archive and create_version_from_url."
         )
+
+
+def _load_startup_config() -> AuditHubServerConfig:
+    """Load startup config and translate validation errors into a user-friendly message."""
+    try:
+        return load_config_from_env()
+    except ValidationError as exc:
+        missing_env_vars = _missing_required_env_vars(exc)
+        if missing_env_vars:
+            raise RuntimeError(
+                "Missing required configuration values; please set the following environment variables: "
+                + ", ".join(missing_env_vars)
+            ) from None
+        raise RuntimeError("AuditHub startup configuration is invalid.") from None
+
+
+def _build_context() -> AuditHubSdkContext:
+    """Build SDK context from environment-backed config input."""
+    return _load_startup_config().context
 
 
 def _build_arg_parser() -> argparse.ArgumentParser:
@@ -243,8 +289,7 @@ def _ctx() -> AuditHubSdkContext:
     if _context is None:
         raise RuntimeError(
             "AuditHub context is not initialised. "
-            "Ensure all required environment variables are set before starting the server: "
-            + ", ".join(_REQUIRED_ENV_VARS)
+            "Ensure startup configuration has been loaded before starting the server."
         )
     return _context
 
@@ -1144,10 +1189,13 @@ async def _create_version_from_archive_with_client(
 
 def main() -> None:
     """Entry point for the ``ah-mcp`` console script."""
-    parser = _build_arg_parser()
-    args, _ = parser.parse_known_args()
-    startup_config = _apply_cli_args_to_config(load_server_config(), args)
-    validate_startup_config(startup_config)
+    try:
+        parser = _build_arg_parser()
+        args, _ = parser.parse_known_args()
+        startup_config = _apply_cli_args_to_config(_load_startup_config(), args)
+        validate_startup_config(startup_config)
+    except RuntimeError as exc:
+        sys.exit(str(exc))
 
     global _allowed_org_ids, _allowed_project_ids, _context
     _allowed_org_ids = startup_config.allowed_org_ids

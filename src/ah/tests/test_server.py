@@ -217,7 +217,7 @@ class TestBuildContext(unittest.TestCase):
     def test_raises_when_vars_missing(self) -> None:
         with patch.dict(os.environ, {}, clear=True), self.assertRaises(RuntimeError) as cm:
             server._build_context()
-        self.assertIn("Missing required environment variables", str(cm.exception))
+        self.assertIn("Missing required configuration values", str(cm.exception))
 
     def test_builds_sdk_configuration(self) -> None:
         with patch.dict(os.environ, _FULL_ENV, clear=True):
