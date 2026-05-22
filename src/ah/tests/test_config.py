@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import importlib
 import json
 import os
 import subprocess
@@ -12,11 +11,8 @@ from pathlib import Path
 import pytest
 import yaml
 
-from tests.sdk_stubs import install_sdk_stubs
+import ah_mcp.config as config
 
-install_sdk_stubs()
-
-config = importlib.import_module("ah_mcp.config")
 AuditHubInputConfig = config.AuditHubInputConfig
 StartupConfigError = config.StartupConfigError
 load_config_from_path = config.load_config_from_path

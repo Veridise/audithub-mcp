@@ -4,10 +4,6 @@ from __future__ import annotations
 
 from pydantic import TypeAdapter
 
-from tests.sdk_stubs import install_sdk_stubs
-
-install_sdk_stubs()
-
 import ah_mcp.vanguard as vanguard  # noqa: E402
 from ah_mcp.models import DefiVanguardV2TaskInput  # noqa: E402
 

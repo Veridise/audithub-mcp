@@ -9,15 +9,10 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
-from pydantic import ValidationError
-
-from tests.sdk_stubs import install_sdk_stubs
-
-install_sdk_stubs()
-
 from audithub_sdk.models.custom_detector_from_standard_library import (  # noqa: E402
     CustomDetectorFromStandardLibrary,
 )
+from pydantic import ValidationError
 
 import ah_mcp.server as server  # noqa: E402
 import ah_mcp.vanguard as vanguard  # noqa: E402
@@ -46,6 +41,7 @@ from ah_mcp.models import (  # noqa: E402
     VersionFromUrlInput,
     VersionNameIndexEntry,
 )
+from tests.sdk_stubs import make_public_configuration, make_vanguard_detector
 
 _TIMESTAMP = "2026-03-26T12:00:00Z"
 _INPUT_INFO_DICT = {"input_type": "archive", "url": "https://example.com/archive.zip"}
@@ -97,21 +93,7 @@ _VERSION_DICT_THREE = {
     "name": "alpha",
 }
 _VERSION_CREATION_DICT = {"id": 45, "message": "Version created"}
-_PUBLIC_DETECTORS_DICT = {
-    "vanguard_solc_versions": ["latest", "0.8.21"],
-    "vanguard_v2_defi_detectors": [
-        {
-            "code": "hiyul/unchecked-return",
-            "caption": "Unchecked Return",
-            "tool": "builtin-tool",
-        },
-        {
-            "code": "hiyul/divide-before-multiply",
-            "caption": "Divide Before Multiply",
-            "tool": "builtin-tool",
-        },
-    ],
-}
+_PUBLIC_DETECTORS = make_public_configuration()
 _CUSTOM_DETECTORS_DICT = [
     {"id": 7, "filename": "Custom Detector", "contents": "Detects things"},
     {"id": 8, "filename": "Another Detector", "contents": "Detects more things"},
@@ -816,7 +798,7 @@ class TestToolCalls(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(spec.relative_path, "specs/invariant.spec")
 
     async def test_public_vanguard_detector_cache_hits_within_lifetime(self) -> None:
-        mock = AsyncMock(return_value=_PUBLIC_DETECTORS_DICT)
+        mock = AsyncMock(return_value=_PUBLIC_DETECTORS)
         with (
             patch.object(server.ConfigurationApi, "get_configuration_configuration_get", mock),
             patch.object(vanguard.time, "monotonic", side_effect=[0.0, 1.0]),
@@ -860,12 +842,14 @@ class TestToolCalls(unittest.IsolatedAsyncioTestCase):
             )
         )
         mock = AsyncMock(
-            return_value={
-                "vanguard_solc_versions": ["latest", "0.8.21"],
-                "vanguard_v2_defi_detectors": [
-                    {"code": "fresh", "caption": "Fresh Detector", "tool": "builtin"}
-                ],
-            }
+            return_value=make_public_configuration(
+                builtin_detectors=[
+                    make_vanguard_detector(
+                        code="fresh",
+                        caption="Fresh Detector",
+                    )
+                ]
+            )
         )
         with (
             patch.object(server.ConfigurationApi, "get_configuration_configuration_get", mock),
@@ -886,7 +870,7 @@ class TestToolCalls(unittest.IsolatedAsyncioTestCase):
             patch.object(
                 server.ConfigurationApi,
                 "get_configuration_configuration_get",
-                AsyncMock(return_value=_PUBLIC_DETECTORS_DICT),
+                AsyncMock(return_value=_PUBLIC_DETECTORS),
             ),
             patch.object(
                 server.CustomDetectorsOrgLibApi,
@@ -925,7 +909,7 @@ class TestToolCalls(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_get_defi_vanguard_detectors_refreshes_custom_detectors_each_call(self) -> None:
-        config_mock = AsyncMock(return_value=_PUBLIC_DETECTORS_DICT)
+        config_mock = AsyncMock(return_value=_PUBLIC_DETECTORS)
         custom_mock = AsyncMock(side_effect=[_CUSTOM_DETECTORS_DICT, [_CUSTOM_DETECTORS_DICT[0]]])
         stdlib_mock = AsyncMock(return_value=_CUSTOM_DETECTORS_LIBRARY_DICT)
         with (
@@ -988,7 +972,7 @@ class TestToolCalls(unittest.IsolatedAsyncioTestCase):
             patch.object(
                 server.ConfigurationApi,
                 "get_configuration_configuration_get",
-                AsyncMock(return_value=_PUBLIC_DETECTORS_DICT),
+                AsyncMock(return_value=_PUBLIC_DETECTORS),
             ),
             patch.object(
                 server.CustomDetectorsOrgLibApi,
@@ -1058,7 +1042,7 @@ class TestToolCalls(unittest.IsolatedAsyncioTestCase):
             patch.object(
                 server.ConfigurationApi,
                 "get_configuration_configuration_get",
-                AsyncMock(return_value=_PUBLIC_DETECTORS_DICT),
+                AsyncMock(return_value=_PUBLIC_DETECTORS),
             ),
             patch.object(
                 server.CustomDetectorsOrgLibApi,
@@ -1095,7 +1079,7 @@ class TestToolCalls(unittest.IsolatedAsyncioTestCase):
             patch.object(
                 server.ConfigurationApi,
                 "get_configuration_configuration_get",
-                AsyncMock(return_value=_PUBLIC_DETECTORS_DICT),
+                AsyncMock(return_value=_PUBLIC_DETECTORS),
             ),
             patch.object(
                 server.ToolsApi,

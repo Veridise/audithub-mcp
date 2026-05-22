@@ -6,10 +6,6 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
-from tests.sdk_stubs import install_sdk_stubs
-
-install_sdk_stubs()
-
 import ah_mcp.server as server  # noqa: E402
 import ah_mcp.vanguard as vanguard  # noqa: E402
 from ah_mcp.models import (  # noqa: E402
