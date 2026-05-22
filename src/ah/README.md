@@ -1,6 +1,9 @@
 # ah-mcp
 
-MCP server for [AuditHub](https://audithub.veridise.com). By default it exposes read-only AuditHub data (organizations, projects, versions, issues, comments, tasks). It can also expose opt-in mutation tools for starting OrCa tasks and creating project versions.
+MCP server for [AuditHub](https://audithub.veridise.com). By default it exposes
+read-only AuditHub data.
+It can also expose opt-in mutating/side-effecting tools for starting tasks and
+creating project versions.
 
 > **Warning:** This server is currently under-developed and has not been tested. Verify all tool outputs manually before acting on them.
 
@@ -61,10 +64,10 @@ All credentials are read from environment variables and passed into the SDK auth
 | `AUDITHUB_OIDC_CLIENT_SECRET` | Yes | OIDC client secret -- keep out of logs and shell history |
 | `AH_ALLOWED_ORG_IDS` | Yes | Comma-separated list of numeric organization IDs the server may access, e.g. `"1,2,3"` |
 | `AH_ALLOWED_PROJECT_IDS` | Yes | Comma-separated list of numeric project IDs the server may access, e.g. `"10,20"` |
-| `AH_ENABLE_TASK_RUNS` | No | Set to `1` to register the opt-in `run_orca_task` mutation tool |
+| `AH_ENABLE_TASK_RUNS` | No | Set to `1` to register the opt-in tools for AuditHub tasks |
 | `AH_ENABLE_VERSION_CREATION` | No | Set to `1` to register the opt-in `create_version_from_url` mutation tool |
 
-CLI flags `--allowed-org-ids` and `--allowed-project-ids` override the corresponding environment variables when both are supplied. Use `--enable-task-runs` to register `run_orca_task` without setting `AH_ENABLE_TASK_RUNS`, or `--enable-version-creation` to register `create_version_from_url` without setting `AH_ENABLE_VERSION_CREATION`.
+CLI flags `--allowed-org-ids` and `--allowed-project-ids` override the corresponding environment variables when both are supplied. Use `--enable-task-runs` to register the task tools without setting `AH_ENABLE_TASK_RUNS`, or `--enable-version-creation` to register `create_version_from_url` without setting `AH_ENABLE_VERSION_CREATION`.
 
 ## Running the server
 
@@ -75,6 +78,12 @@ set -a && source .env && set +a && uv run ah-mcp
 ```
 
 All required variables in `.env` must be set before the server starts. Missing variables cause an immediate exit with a clear error listing which are absent.
+
+To print the registered MCP tools and their JSON schemas without starting the server, run:
+
+```bash
+uv run ah-mcp --list-tools
+```
 
 ## Configure for agents
 
@@ -106,6 +115,7 @@ credentials and allowlist IDs; no secrets belong in the agent config file.
 |---|---|
 | `get_my_organizations` | List all AuditHub organizations the authenticated user belongs to |
 | `get_organization_name_index` | List allowlisted organizations as deterministic name-to-ID lookup entries |
+| `get_defi_vanguard_detectors` | List all DeFi Vanguard detectors for an organization using the Vanguard listing block format |
 | `get_project` | Get details for a specific project |
 | `get_project_name_index` | List allowlisted projects in an organization as deterministic name-to-ID lookup entries |
 | `get_latest_version` | Get the latest version of a project |
@@ -122,6 +132,7 @@ credentials and allowlist IDs; no secrets belong in the agent config file.
 | `get_project_issue` | Get a specific issue from a project |
 | `get_project_comments` | Get all comments for a project across all versions |
 | `run_orca_task` | Start an OrCa task for a project version; registered only when task runs are explicitly enabled |
+| `run_defi_vanguard_task` | Start a DeFi Vanguard task for a project version; registered only when task runs are explicitly enabled |
 | `create_version_from_archive` | Create a project version by uploading a local `.zip` archive; registered only when version creation is explicitly enabled |
 | `create_version_from_url` | Create a project version from a git repository or archive URL; registered only when version creation is explicitly enabled |
 
@@ -136,8 +147,11 @@ ID-based tools.
 
 - **Read-only by default.** Default tools are named `get_*` and only invoke generated `audithub-sdk` GET endpoints.
 - **Opt-in OrCa task execution.** The `run_orca_task` mutation tool is registered only when `AH_ENABLE_TASK_RUNS=1` or `--enable-task-runs` is supplied. It calls the generated OrCa POST endpoint through `audithub-sdk`.
+- **Opt-in DeFi Vanguard task execution.** The `run_defi_vanguard_task` mutation tool is registered under the same task-run opt-in gate. Its inputs are flattened at the top level: `organization_id`, `project_id`, `version_id`, detector selections, and the runtime options. Pass detector selections as two-item JSON arrays `[type, id]`, where builtin selectors use a built-in detector code from `get_defi_vanguard_detectors`, and custom selectors use the catalog id shown by the same tool. The server resolves those selections through the backend detector catalog before calling the generated DeFi Vanguard v2 POST endpoint.
 - **On-chain OrCa mode.** When launching OrCa against already deployed contracts, pass `deployment_info_file` as a path ending in `.deployment.json`. The server normalizes that into `on_chain=True` and rejects mismatched paths early so callers do not accidentally launch a local Foundry-style run.
 - **Opt-in version creation.** The `create_version_from_url` mutation tool is registered only when `AH_ENABLE_VERSION_CREATION=1` or `--enable-version-creation` is supplied. It calls the generated project version URL POST endpoint through `audithub-sdk`.
+- **Detector catalog cache.** The DeFi Vanguard v2 built-in detector list is fetched lazily from the AuditHub configuration endpoint and cached in-process for one day. Custom detectors are fetched live on each request from both the organization library and the standard library.
+- **Detector listing format.** `get_defi_vanguard_detectors` returns one block per detector. Each block starts with `detector: <json>` where `<json>` is a JSON value matching `DefiVanguardV2DetectorSelectionInput`, followed by `title:`. Standard-library custom detectors also include `description:` loaded from the detector payload. Each block ends with `------`.
 - **Credential isolation.** OIDC credentials are read from the environment once at startup and passed into `audithub_sdk_ext.AuthenticatedApiClient`. They are never accepted as tool arguments and are not surfaced in tool outputs or sanitized error messages.
 - **ID allowlisting.** The server refuses to access any organization or project whose numeric ID was not explicitly included in `AH_ALLOWED_ORG_IDS` / `AH_ALLOWED_PROJECT_IDS`. The check runs before any network request.
 - **SDK-only transport.** All AuditHub interaction flows through `audithub-sdk` and `audithub_sdk_ext`; there is no raw HTTP helper in the MCP server.

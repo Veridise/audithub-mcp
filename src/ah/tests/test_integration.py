@@ -4,8 +4,31 @@ from __future__ import annotations
 
 import asyncio
 import os
+from pathlib import Path
 
 import pytest
+
+from ah_mcp.config import _load_raw_config_from_path
+
+
+def _bootstrap_from_config_file() -> None:
+    config_file = os.environ.get("AH_MCP_CONFIG_FILE")
+    if config_file:
+        raw = _load_raw_config_from_path(Path(config_file))
+        for key in (
+            "audithub_base_url",
+            "audithub_oidc_configuration_url",
+            "audithub_oidc_client_id",
+            "audithub_oidc_client_secret",
+        ):
+            value = raw.get(key)
+            if value is None:
+                continue
+            env_key = key.upper()
+            os.environ[env_key] = str(value)
+
+
+_bootstrap_from_config_file()
 
 if not os.environ.get("AUDITHUB_BASE_URL"):
     pytest.skip("AUDITHUB_BASE_URL not set — skipping integration tests", allow_module_level=True)
@@ -72,6 +95,16 @@ def test_list_version_name_index() -> None:
     entries = _run(server.get_version_name_index(organization_id=_ORG_ID, project_id=_PROJECT_ID))
     assert isinstance(entries, list)
     assert all(isinstance(entry, VersionNameIndexEntry) for entry in entries)
+
+
+def test_list_vanguard_detectors() -> None:
+    detectors = _run(server.get_defi_vanguard_detectors(organization_id=_ORG_ID))
+    assert any(
+        'detector: ["builtin", "hiyul/unchecked-return"]' in detector for detector in detectors
+    )
+    assert any('detector: ["stdlib",' in detector for detector in detectors), (
+        "should have at least one custom detector"
+    )
 
 
 def test_list_issues() -> None:

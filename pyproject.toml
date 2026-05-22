@@ -25,3 +25,8 @@ ah-mcp = { workspace = true }
 
 [tool.uv.workspace]
 members = ["src/ah"]
+
+[tool.mypy]
+python_version = "3.12"
+mypy_path = ["src/ah/src"]
+ignore_missing_imports = true

@@ -39,6 +39,10 @@ strict = true
 # audithub_sdk is generated and may not ship complete stubs.
 ignore_missing_imports = true
 
+[[tool.mypy.overrides]]
+module = ["audithub_sdk", "audithub_sdk.*", "audithub_sdk_ext"]
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"

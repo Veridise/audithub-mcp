@@ -130,6 +130,67 @@ class IssueDetails(_BaseSdkModel):
     data: dict[str, Any]
 
 
+class VanguardDetector(_BaseSdkModel):
+    code: str
+    caption: str
+    tool: str
+
+
+class PublicConfiguration(_BaseSdkModel):
+    vanguard_solc_versions: list[str] = []
+    vanguard_v2_defi_detectors: list[VanguardDetector] | None = None
+
+
+class CustomDetectorWithId(_BaseSdkModel):
+    filename: str
+    contents: str
+    encoding: str = "plain"
+    id: int
+
+
+class CustomDetectorFromOrganizationLibrary(_BaseSdkModel):
+    type: str = "orglib"
+    id: int
+
+
+class CustomDetectorFromStandardLibrary(_BaseSdkModel):
+    type: str = "stdlib"
+    library_version: str | None = None
+    category: str
+    name: str
+
+
+class CustomDetectorFromVersion(_BaseSdkModel):
+    type: str = "version"
+    relative_path: str
+
+
+class RootModelListUnionCustomDetectorFromVersionCustomDetectorFromStandardLibraryCustomDetectorFromOrganizationLibraryInner(  # noqa: E501
+    _BaseSdkModel
+):
+    actual_instance: Any
+
+
+class DefiVanguardV2Parameters(_BaseSdkModel):
+    detector: list[str] | None = None
+    input_limit: list[str] | None = None
+    cross_version_triage: bool = False
+    lang: str = "solidity"
+    solc: str | None = None
+    ignore_build_system: bool = False
+    custom_detectors: (
+        list[
+            RootModelListUnionCustomDetectorFromVersionCustomDetectorFromStandardLibraryCustomDetectorFromOrganizationLibraryInner
+        ]
+        | None
+    ) = None
+
+
+class DefiVanguardV2Input(_BaseSdkModel):
+    name: str | None = None
+    parameters: DefiVanguardV2Parameters
+
+
 class VSpecFromVersion(_BaseSdkModel):
     type: str = "version"
     relative_path: str
@@ -259,6 +320,11 @@ class _ApiBase:
         self.api_client = api_client
 
 
+class ConfigurationApi(_ApiBase):
+    async def get_configuration_configuration_get(self):
+        raise NotImplementedError
+
+
 class UsersApi(_ApiBase):
     async def get_organizations_users_myorganizations_get(self) -> list[MyOrganization]:
         raise NotImplementedError
@@ -354,8 +420,25 @@ class ToolsApi(_ApiBase):
     ):
         raise NotImplementedError
 
+    async def post_tool_vanguard_v2_organizations_organization_id_projects_project_id_versions_version_id_tools_vanguard_v2_post(  # noqa: E501
+        self, **kwargs
+    ):
+        raise NotImplementedError
 
-def _module(name: str) -> types.ModuleType:
+
+class CustomDetectorsOrgLibApi(_ApiBase):
+    async def get_custom_detectors_organizations_organization_id_custom_detectors_get(
+        self, **kwargs
+    ):
+        raise NotImplementedError
+
+
+class CustomDetectorsStdLibApi(_ApiBase):
+    async def get_custom_detectors_library_custom_detectors_library_get(self):
+        raise NotImplementedError
+
+
+def _module(name: str) -> Any:
     mod = types.ModuleType(name)
     sys.modules[name] = mod
     return mod
@@ -367,6 +450,8 @@ def install_sdk_stubs() -> None:
     sdk.Configuration = Configuration
 
     _module("audithub_sdk.api")
+    configuration_api = _module("audithub_sdk.api.configuration_api")
+    configuration_api.ConfigurationApi = ConfigurationApi
     users_api = _module("audithub_sdk.api.users_api")
     users_api.UsersApi = UsersApi
     projects_api = _module("audithub_sdk.api.projects_api")
@@ -379,6 +464,10 @@ def install_sdk_stubs() -> None:
     tasks_api.TasksApi = TasksApi
     tools_api = _module("audithub_sdk.api.tools_api")
     tools_api.ToolsApi = ToolsApi
+    custom_detectors_org_lib_api = _module("audithub_sdk.api.custom_detectors_org_lib_api")
+    custom_detectors_org_lib_api.CustomDetectorsOrgLibApi = CustomDetectorsOrgLibApi
+    custom_detectors_std_lib_api = _module("audithub_sdk.api.custom_detectors_std_lib_api")
+    custom_detectors_std_lib_api.CustomDetectorsStdLibApi = CustomDetectorsStdLibApi
 
     _module("audithub_sdk.models")
     for name, cls in (
@@ -395,6 +484,18 @@ def install_sdk_stubs() -> None:
         ("thread", Thread),
         ("issue_for_list", IssueForList),
         ("issue_details", IssueDetails),
+        ("vanguard_detector", VanguardDetector),
+        ("public_configuration", PublicConfiguration),
+        ("custom_detector_with_id", CustomDetectorWithId),
+        ("custom_detector_from_organization_library", CustomDetectorFromOrganizationLibrary),
+        ("custom_detector_from_standard_library", CustomDetectorFromStandardLibrary),
+        ("custom_detector_from_version", CustomDetectorFromVersion),
+        (
+            "root_model_list_union_custom_detector_from_version_custom_detector_from_standard_library_custom_detector_from_organization_library_inner",  # noqa: E501
+            RootModelListUnionCustomDetectorFromVersionCustomDetectorFromStandardLibraryCustomDetectorFromOrganizationLibraryInner,  # noqa: E501
+        ),
+        ("defi_vanguard_v2_parameters", DefiVanguardV2Parameters),
+        ("defi_vanguard_v2_input", DefiVanguardV2Input),
         ("v_spec_from_version", VSpecFromVersion),
         ("v_spec_from_standard_library", VSpecFromStandardLibrary),
         ("v_spec_from_organization_library", VSpecFromOrganizationLibrary),

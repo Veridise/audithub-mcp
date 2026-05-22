@@ -15,9 +15,15 @@ from tests.sdk_stubs import install_sdk_stubs
 
 install_sdk_stubs()
 
+from audithub_sdk.models.custom_detector_from_standard_library import (  # noqa: E402
+    CustomDetectorFromStandardLibrary,
+)
+
 import ah_mcp.server as server  # noqa: E402
+import ah_mcp.vanguard as vanguard  # noqa: E402
 from ah_mcp.models import (  # noqa: E402
     Comment,
+    DefiVanguardV2TaskInput,
     FIOData,
     IssueDetails,
     IssueForList,
@@ -91,6 +97,36 @@ _VERSION_DICT_THREE = {
     "name": "alpha",
 }
 _VERSION_CREATION_DICT = {"id": 45, "message": "Version created"}
+_PUBLIC_DETECTORS_DICT = {
+    "vanguard_solc_versions": ["latest", "0.8.21"],
+    "vanguard_v2_defi_detectors": [
+        {
+            "code": "hiyul/unchecked-return",
+            "caption": "Unchecked Return",
+            "tool": "builtin-tool",
+        },
+        {
+            "code": "hiyul/divide-before-multiply",
+            "caption": "Divide Before Multiply",
+            "tool": "builtin-tool",
+        },
+    ],
+}
+_CUSTOM_DETECTORS_DICT = [
+    {"id": 7, "filename": "Custom Detector", "contents": "Detects things"},
+    {"id": 8, "filename": "Another Detector", "contents": "Detects more things"},
+]
+_CUSTOM_DETECTORS_LIBRARY_DICT = {
+    "library_version": "latest",
+    "detectors": [
+        {
+            "category": "hiyul",
+            "name": "library-guard",
+            "library_version": "latest",
+            "description": "Description of the Library Guard detector",
+        }
+    ],
+}
 _TASK_DICT = {
     "id": 99,
     "tool_name": "analysis",
@@ -189,6 +225,7 @@ def setUpModule() -> None:
     server._context = None
     server._allowed_org_ids = frozenset()
     server._allowed_project_ids = frozenset()
+    vanguard.reset_builtin_vanguard_v2_detectors_cache()
     server._set_task_runs_enabled(False)
 
 
@@ -196,6 +233,7 @@ def tearDownModule() -> None:
     server._context = None
     server._allowed_org_ids = frozenset()
     server._allowed_project_ids = frozenset()
+    vanguard.reset_builtin_vanguard_v2_detectors_cache()
     server._set_task_runs_enabled(False)
 
 
@@ -211,6 +249,24 @@ def _orca_task_input() -> OrCaTaskInput:
             ],
             timeout=30,
         ),
+    )
+
+
+def _vanguard_task_input() -> DefiVanguardV2TaskInput:
+    return DefiVanguardV2TaskInput(
+        organization_id=1,
+        project_id=10,
+        version_id=42,
+        name="vanguard-test",
+        detectors=[
+            ("builtin", "hiyul/unchecked-return"),
+            ("stdlib", "library-guard"),
+            ("orglib", 7),
+        ],
+        input_limit=["Vault"],
+        cross_version_triage=True,
+        solc="0.8.21",
+        ignore_build_system=True,
     )
 
 
@@ -279,6 +335,7 @@ class TestCtxCache(unittest.TestCase):
         self.assertFalse(server._task_runs_enabled)
         self.assertFalse(server._version_creation_enabled)
         self.assertFalse(server._is_tool_registered("run_orca_task"))
+        self.assertFalse(server._is_tool_registered("run_defi_vanguard_task"))
         self.assertFalse(server._is_tool_registered("create_version_from_archive"))
         self.assertFalse(server._is_tool_registered("create_version_from_url"))
 
@@ -295,6 +352,7 @@ class TestCtxCache(unittest.TestCase):
                 server.main()
             self.assertTrue(server._task_runs_enabled)
             self.assertTrue(server._is_tool_registered("run_orca_task"))
+            self.assertTrue(server._is_tool_registered("run_defi_vanguard_task"))
         finally:
             server._set_task_runs_enabled(False)
 
@@ -332,6 +390,7 @@ class TestCtxCache(unittest.TestCase):
                 server.main()
             self.assertTrue(server._task_runs_enabled)
             self.assertTrue(server._is_tool_registered("run_orca_task"))
+            self.assertTrue(server._is_tool_registered("run_defi_vanguard_task"))
         finally:
             server._set_task_runs_enabled(False)
 
@@ -374,8 +433,9 @@ class TestCtxCache(unittest.TestCase):
                 patch.object(server.mcp, "run"),
             ):
                 server.main()
-            self.assertIsNotNone(server._context)
-            self.assertEqual(server._context.configuration.host, "https://override.example/api/v1")
+            ctx = server._context
+            assert ctx is not None
+            self.assertEqual(ctx.configuration.host, "https://override.example/api/v1")
             self.assertEqual(server._allowed_org_ids, frozenset({7, 8}))
             self.assertEqual(server._allowed_project_ids, frozenset({10, 20}))
             self.assertFalse(server._task_runs_enabled)
@@ -384,6 +444,28 @@ class TestCtxCache(unittest.TestCase):
             server._context = None
             server._allowed_org_ids = frozenset()
             server._allowed_project_ids = frozenset()
+            server._set_task_runs_enabled(False)
+            server._set_version_creation_enabled(False)
+
+    def test_main_lists_tools_and_exits(self) -> None:
+        server._context = None
+        argv = ["ah-mcp", "--list-tools"]
+        try:
+            with (
+                patch.dict(os.environ, _FULL_ENV, clear=True),
+                patch.object(sys, "argv", argv),
+                patch.object(server.mcp, "run") as mock_run,
+                patch("builtins.print") as mock_print,
+            ):
+                server.main()
+            mock_run.assert_not_called()
+            mock_print.assert_called_once()
+            rendered = mock_print.call_args.args[0]
+            self.assertIn('"name": "run_defi_vanguard_task"', rendered)
+            self.assertIn('"name": "create_version_from_archive"', rendered)
+            self.assertIn('"name": "create_version_from_url"', rendered)
+            self.assertIsNone(server._context)
+        finally:
             server._set_task_runs_enabled(False)
             server._set_version_creation_enabled(False)
 
@@ -405,8 +487,9 @@ class TestCtxCache(unittest.TestCase):
                 patch.object(server.mcp, "run"),
             ):
                 server.main()
-            self.assertIsNotNone(server._context)
-            self.assertEqual(server._context.configuration.host, "https://example.com/api/v1")
+            ctx = server._context
+            assert ctx is not None
+            self.assertEqual(ctx.configuration.host, "https://example.com/api/v1")
             self.assertEqual(server._allowed_org_ids, frozenset({1, 2}))
             self.assertEqual(server._allowed_project_ids, frozenset({10, 20}))
             self.assertTrue(server._task_runs_enabled)
@@ -455,6 +538,7 @@ class TestReadOnlyToolSurface(unittest.TestCase):
         names = list(server.mcp._tool_manager._tools.keys())
         self.assertGreater(len(names), 0)
         self.assertNotIn("run_orca_task", names)
+        self.assertNotIn("run_defi_vanguard_task", names)
         self.assertNotIn("create_version_from_archive", names)
         self.assertNotIn("create_version_from_url", names)
         for name in names:
@@ -464,6 +548,7 @@ class TestReadOnlyToolSurface(unittest.TestCase):
         server._set_task_runs_enabled(True)
         names = list(server.mcp._tool_manager._tools.keys())
         self.assertIn("run_orca_task", names)
+        self.assertIn("run_defi_vanguard_task", names)
 
     def test_create_version_from_archive_registers_only_when_enabled(self) -> None:
         server._set_version_creation_enabled(True)
@@ -480,6 +565,7 @@ class TestToolCalls(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
         server._allowed_org_ids = frozenset({1})
         server._allowed_project_ids = frozenset({10})
+        vanguard.reset_builtin_vanguard_v2_detectors_cache()
         server._set_task_runs_enabled(False)
         server._set_version_creation_enabled(False)
         with patch.dict(os.environ, _FULL_ENV, clear=True):
@@ -489,6 +575,7 @@ class TestToolCalls(unittest.IsolatedAsyncioTestCase):
         server._context = None
         server._allowed_org_ids = frozenset()
         server._allowed_project_ids = frozenset()
+        vanguard.reset_builtin_vanguard_v2_detectors_cache()
         server._set_task_runs_enabled(False)
         server._set_version_creation_enabled(False)
 
@@ -640,7 +727,9 @@ class TestToolCalls(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.content_length, 12)
         self.assertEqual(result.content_base64, "eyJvayI6IHRydWV9")
         self.assertEqual(result.content_encoding, "base64")
-        self.assertEqual(mock_get.await_args.kwargs["artifact_id"], "artifact-1")
+        call_args = mock_get.await_args
+        assert call_args is not None
+        self.assertEqual(call_args.kwargs["artifact_id"], "artifact-1")
 
     async def test_get_task_artifact_rejects_oversized_content(self) -> None:
         response = SimpleNamespace(raw_data=b"abcd", headers={})
@@ -714,7 +803,9 @@ class TestToolCalls(unittest.IsolatedAsyncioTestCase):
             )
         self.assertIsInstance(result, TaskCreation)
         self.assertEqual(result.task_id, 123)
-        kwargs = mock.await_args.kwargs
+        call_args = mock.await_args
+        assert call_args is not None
+        kwargs = call_args.kwargs
         self.assertEqual(kwargs["organization_id"], 1)
         self.assertEqual(kwargs["project_id"], 10)
         self.assertEqual(kwargs["version_id"], 42)
@@ -723,6 +814,305 @@ class TestToolCalls(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sdk_input.parameters.timeout, 30)
         spec = sdk_input.specs_override[0].actual_instance
         self.assertEqual(spec.relative_path, "specs/invariant.spec")
+
+    async def test_public_vanguard_detector_cache_hits_within_lifetime(self) -> None:
+        mock = AsyncMock(return_value=_PUBLIC_DETECTORS_DICT)
+        with (
+            patch.object(server.ConfigurationApi, "get_configuration_configuration_get", mock),
+            patch.object(vanguard.time, "monotonic", side_effect=[0.0, 1.0]),
+        ):
+            first = await vanguard.get_builtin_vanguard_v2_detectors(
+                lambda: server._with_api_client(
+                    lambda client: server.ConfigurationApi(
+                        client
+                    ).get_configuration_configuration_get()
+                )
+            )
+            second = await vanguard.get_builtin_vanguard_v2_detectors(
+                lambda: server._with_api_client(
+                    lambda client: server.ConfigurationApi(
+                        client
+                    ).get_configuration_configuration_get()
+                )
+            )
+        self.assertEqual(
+            [detector.code for detector in first],
+            ["hiyul/unchecked-return", "hiyul/divide-before-multiply"],
+        )
+        self.assertEqual(
+            [detector.code for detector in second],
+            ["hiyul/unchecked-return", "hiyul/divide-before-multiply"],
+        )
+        mock.assert_awaited_once()
+
+    async def test_public_vanguard_detector_cache_refreshes_after_lifetime(self) -> None:
+        vanguard.set_builtin_vanguard_v2_detectors_cache(
+            (
+                0.0,
+                vanguard.GlobalVanguardV2Configuration(
+                    builtin_detectors=(
+                        vanguard.VanguardDetector(
+                            code="stale", caption="Stale Detector", tool="builtin"
+                        ),
+                    ),
+                    solc_versions=("latest", "0.8.20"),
+                ),
+            )
+        )
+        mock = AsyncMock(
+            return_value={
+                "vanguard_solc_versions": ["latest", "0.8.21"],
+                "vanguard_v2_defi_detectors": [
+                    {"code": "fresh", "caption": "Fresh Detector", "tool": "builtin"}
+                ],
+            }
+        )
+        with (
+            patch.object(server.ConfigurationApi, "get_configuration_configuration_get", mock),
+            patch.object(vanguard.time, "monotonic", return_value=86401.0),
+        ):
+            detectors = await vanguard.get_builtin_vanguard_v2_detectors(
+                lambda: server._with_api_client(
+                    lambda client: server.ConfigurationApi(
+                        client
+                    ).get_configuration_configuration_get()
+                )
+            )
+        self.assertEqual([detector.code for detector in detectors], ["fresh"])
+        mock.assert_awaited_once()
+
+    async def test_get_defi_vanguard_detectors_returns_formatted_listing(self) -> None:
+        with (
+            patch.object(
+                server.ConfigurationApi,
+                "get_configuration_configuration_get",
+                AsyncMock(return_value=_PUBLIC_DETECTORS_DICT),
+            ),
+            patch.object(
+                server.CustomDetectorsOrgLibApi,
+                "get_custom_detectors_organizations_organization_id_custom_detectors_get",
+                AsyncMock(return_value=_CUSTOM_DETECTORS_DICT),
+            ),
+            patch.object(
+                server.CustomDetectorsStdLibApi,
+                "get_custom_detectors_library_custom_detectors_library_get",
+                AsyncMock(return_value=_CUSTOM_DETECTORS_LIBRARY_DICT),
+            ),
+        ):
+            result = await server.get_defi_vanguard_detectors(organization_id=1)
+        self.assertEqual(
+            result,
+            [
+                ('detector: ["orglib", 8]\ntitle: Another Detector\n------'),
+                ('detector: ["orglib", 7]\ntitle: Custom Detector\n------'),
+                (
+                    'detector: ["builtin", "hiyul/divide-before-multiply"]\n'
+                    "title: Divide Before Multiply\n"
+                    "------"
+                ),
+                (
+                    'detector: ["stdlib", "library-guard"]\n'
+                    "title: Library Guard\n"
+                    "description: Description of the Library Guard detector\n"
+                    "------"
+                ),
+                (
+                    'detector: ["builtin", "hiyul/unchecked-return"]\n'
+                    "title: Unchecked Return\n"
+                    "------"
+                ),
+            ],
+        )
+
+    async def test_get_defi_vanguard_detectors_refreshes_custom_detectors_each_call(self) -> None:
+        config_mock = AsyncMock(return_value=_PUBLIC_DETECTORS_DICT)
+        custom_mock = AsyncMock(side_effect=[_CUSTOM_DETECTORS_DICT, [_CUSTOM_DETECTORS_DICT[0]]])
+        stdlib_mock = AsyncMock(return_value=_CUSTOM_DETECTORS_LIBRARY_DICT)
+        with (
+            patch.object(
+                server.ConfigurationApi, "get_configuration_configuration_get", config_mock
+            ),
+            patch.object(
+                server.CustomDetectorsOrgLibApi,
+                "get_custom_detectors_organizations_organization_id_custom_detectors_get",
+                custom_mock,
+            ),
+            patch.object(
+                server.CustomDetectorsStdLibApi,
+                "get_custom_detectors_library_custom_detectors_library_get",
+                stdlib_mock,
+            ),
+            patch.object(
+                vanguard.time,
+                "monotonic",
+                side_effect=[0.0, 1.0, 1.0, 1.0, 1.0, 1.0],
+            ),
+        ):
+            first = await server.get_defi_vanguard_detectors(organization_id=1)
+            second = await server.get_defi_vanguard_detectors(organization_id=1)
+        self.assertEqual(len(first), 5)
+        self.assertEqual(len(second), 4)
+        config_mock.assert_awaited_once()
+        self.assertEqual(custom_mock.await_count, 2)
+        self.assertEqual(stdlib_mock.await_count, 2)
+
+    async def test_run_defi_vanguard_task_disabled_prevents_sdk_call(self) -> None:
+        mock = AsyncMock(return_value=_TASK_CREATION_DICT)
+        with (
+            patch.object(
+                server.ToolsApi,
+                "post_tool_vanguard_v2_organizations_organization_id_projects_project_id_versions_version_id_tools_vanguard_v2_post",
+                mock,
+            ),
+            self.assertRaises(RuntimeError) as cm,
+        ):
+            task_input = _vanguard_task_input()
+            await server.run_defi_vanguard_task(
+                organization_id=1,
+                project_id=10,
+                version_id=42,
+                detectors=task_input.detectors,
+                name=task_input.name,
+                input_limit=task_input.input_limit,
+                cross_version_triage=task_input.cross_version_triage,
+                solc=task_input.solc,
+                ignore_build_system=task_input.ignore_build_system,
+            )
+        self.assertIn("task runs are disabled", str(cm.exception))
+        mock.assert_not_awaited()
+
+    async def test_run_defi_vanguard_task_returns_task_creation(self) -> None:
+        server._set_task_runs_enabled(True)
+        mock = AsyncMock(return_value=_TASK_CREATION_DICT)
+        with (
+            patch.object(
+                server.ConfigurationApi,
+                "get_configuration_configuration_get",
+                AsyncMock(return_value=_PUBLIC_DETECTORS_DICT),
+            ),
+            patch.object(
+                server.CustomDetectorsOrgLibApi,
+                "get_custom_detectors_organizations_organization_id_custom_detectors_get",
+                AsyncMock(return_value=_CUSTOM_DETECTORS_DICT),
+            ),
+            patch.object(
+                server.CustomDetectorsStdLibApi,
+                "get_custom_detectors_library_custom_detectors_library_get",
+                AsyncMock(return_value=_CUSTOM_DETECTORS_LIBRARY_DICT),
+            ),
+            patch.object(
+                server.ToolsApi,
+                "post_tool_vanguard_v2_organizations_organization_id_projects_project_id_versions_version_id_tools_vanguard_v2_post",
+                mock,
+            ),
+        ):
+            task_input = _vanguard_task_input()
+            result = await server.run_defi_vanguard_task(
+                organization_id=1,
+                project_id=10,
+                version_id=42,
+                detectors=task_input.detectors,
+                name=task_input.name,
+                input_limit=task_input.input_limit,
+                cross_version_triage=task_input.cross_version_triage,
+                solc=task_input.solc,
+                ignore_build_system=task_input.ignore_build_system,
+            )
+        self.assertIsInstance(result, TaskCreation)
+        self.assertEqual(result.task_id, 123)
+        call_args = mock.await_args
+        assert call_args is not None
+        kwargs = call_args.kwargs
+        self.assertEqual(kwargs["organization_id"], 1)
+        self.assertEqual(kwargs["project_id"], 10)
+        self.assertEqual(kwargs["version_id"], 42)
+        sdk_input = kwargs["defi_vanguard_v2_input"]
+        self.assertEqual(sdk_input.name, "vanguard-test")
+        self.assertEqual(sdk_input.parameters.input_limit, ["Vault"])
+        self.assertEqual(sdk_input.parameters.detector, ["hiyul/unchecked-return"])
+        self.assertIsNotNone(sdk_input.parameters.custom_detectors)
+        assert sdk_input.parameters.custom_detectors is not None
+        self.assertEqual(len(sdk_input.parameters.custom_detectors), 2)
+        self.assertIsInstance(
+            sdk_input.parameters.custom_detectors[0].actual_instance,
+            CustomDetectorFromStandardLibrary,
+        )
+        self.assertEqual(
+            sdk_input.parameters.custom_detectors[0].actual_instance.category,
+            "hiyul",
+        )
+        self.assertEqual(
+            sdk_input.parameters.custom_detectors[0].actual_instance.name,
+            "library-guard",
+        )
+        self.assertEqual(sdk_input.parameters.solc, "0.8.21")
+        self.assertEqual(
+            sdk_input.parameters.custom_detectors[1].actual_instance.id,
+            7,
+        )
+
+    async def test_run_defi_vanguard_task_maps_none_solc_to_latest(self) -> None:
+        server._set_task_runs_enabled(True)
+        mock = AsyncMock(return_value=_TASK_CREATION_DICT)
+        with (
+            patch.object(
+                server.ConfigurationApi,
+                "get_configuration_configuration_get",
+                AsyncMock(return_value=_PUBLIC_DETECTORS_DICT),
+            ),
+            patch.object(
+                server.CustomDetectorsOrgLibApi,
+                "get_custom_detectors_organizations_organization_id_custom_detectors_get",
+                AsyncMock(return_value=[]),
+            ),
+            patch.object(
+                server.CustomDetectorsStdLibApi,
+                "get_custom_detectors_library_custom_detectors_library_get",
+                AsyncMock(return_value={}),
+            ),
+            patch.object(
+                server.ToolsApi,
+                "post_tool_vanguard_v2_organizations_organization_id_projects_project_id_versions_version_id_tools_vanguard_v2_post",
+                mock,
+            ),
+        ):
+            await server.run_defi_vanguard_task(
+                organization_id=1,
+                project_id=10,
+                version_id=42,
+                detectors=[("builtin", "hiyul/unchecked-return")],
+                solc=None,
+            )
+        call_args = mock.await_args
+        assert call_args is not None
+        sdk_input = call_args.kwargs["defi_vanguard_v2_input"]
+        self.assertEqual(sdk_input.parameters.solc, "latest")
+
+    async def test_run_defi_vanguard_task_rejects_unknown_solc(self) -> None:
+        server._set_task_runs_enabled(True)
+        mock = AsyncMock(return_value=_TASK_CREATION_DICT)
+        with (
+            patch.object(
+                server.ConfigurationApi,
+                "get_configuration_configuration_get",
+                AsyncMock(return_value=_PUBLIC_DETECTORS_DICT),
+            ),
+            patch.object(
+                server.ToolsApi,
+                "post_tool_vanguard_v2_organizations_organization_id_projects_project_id_versions_version_id_tools_vanguard_v2_post",
+                mock,
+            ),
+            self.assertRaises(RuntimeError) as cm,
+        ):
+            await server.run_defi_vanguard_task(
+                organization_id=1,
+                project_id=10,
+                version_id=42,
+                detectors=[("builtin", "hiyul/unchecked-return")],
+                solc="0.7.6",
+            )
+        self.assertIn("Unsupported solc version", str(cm.exception))
+        mock.assert_not_awaited()
 
     async def test_create_version_from_url_disabled_prevents_sdk_call(self) -> None:
         mock = AsyncMock(return_value=_VERSION_CREATION_DICT)
@@ -820,20 +1210,21 @@ class TestToolCalls(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIsInstance(result, VersionCreation)
         self.assertEqual(result.id, 45)
-        self.assertIsNotNone(client.param_serialize_kwargs)
+        param_serialize_kwargs = client.param_serialize_kwargs
+        assert param_serialize_kwargs is not None
         self.assertEqual(
-            client.param_serialize_kwargs["header_params"],
+            param_serialize_kwargs["header_params"],
             {
                 "Accept": "application/json",
                 "Content-Type": "multipart/form-data",
             },
         )
         self.assertEqual(
-            client.param_serialize_kwargs["files"],
+            param_serialize_kwargs["files"],
             {"archive": "/tmp/archive.zip"},
         )
         self.assertEqual(
-            client.param_serialize_kwargs["post_params"],
+            param_serialize_kwargs["post_params"],
             [
                 ("name", "v2.0"),
                 ("commit_hash", "def456"),
@@ -866,7 +1257,9 @@ class TestToolCalls(unittest.IsolatedAsyncioTestCase):
             )
         self.assertIsInstance(result, VersionCreation)
         self.assertEqual(result.id, 45)
-        kwargs = mock.await_args.kwargs
+        call_args = mock.await_args
+        assert call_args is not None
+        kwargs = call_args.kwargs
         self.assertEqual(kwargs["organization_id"], 1)
         self.assertEqual(kwargs["project_id"], 10)
         self.assertEqual(kwargs["name"], "v2.0")
@@ -887,7 +1280,9 @@ class TestToolCalls(unittest.IsolatedAsyncioTestCase):
             result = await server.get_version_comments(
                 organization_id=1, project_id=10, version_id=3, limit=75, offset=25
             )
-        kwargs = mock.await_args.kwargs
+        call_args = mock.await_args
+        assert call_args is not None
+        kwargs = call_args.kwargs
         self.assertEqual(kwargs["limit"], 75)
         self.assertEqual(kwargs["offset"], 25)
         self.assertIsInstance(result[0], Comment)
@@ -907,7 +1302,9 @@ class TestToolCalls(unittest.IsolatedAsyncioTestCase):
                 limit=75,
                 offset=25,
             )
-        kwargs = mock.await_args.kwargs
+        call_args = mock.await_args
+        assert call_args is not None
+        kwargs = call_args.kwargs
         self.assertEqual(kwargs["thread_id"], 7)
         self.assertEqual(kwargs["limit"], 75)
         self.assertEqual(kwargs["offset"], 25)

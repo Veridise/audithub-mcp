@@ -10,8 +10,10 @@ registered only when their narrow opt-in gates are explicitly enabled.
 from __future__ import annotations
 
 import argparse
+import asyncio
 import base64
 import inspect
+import json
 import sys
 import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
@@ -19,6 +21,9 @@ from pathlib import Path
 from typing import Annotated
 
 import audithub_sdk
+from audithub_sdk.api.configuration_api import ConfigurationApi
+from audithub_sdk.api.custom_detectors_org_lib_api import CustomDetectorsOrgLibApi
+from audithub_sdk.api.custom_detectors_std_lib_api import CustomDetectorsStdLibApi
 from audithub_sdk.api.issues_api import IssuesApi
 from audithub_sdk.api.projects_api import ProjectsApi
 from audithub_sdk.api.tasks_api import TasksApi
@@ -47,9 +52,12 @@ from mcp.server.fastmcp import FastMCP
 from pydantic import Field, TypeAdapter, ValidationError
 
 from ah_mcp import config as server_config
+from ah_mcp import vanguard
 from ah_mcp.audit import log_call_error, log_call_start, log_call_success
 from ah_mcp.models import (
     Comment,
+    DefiVanguardV2DetectorSelectionInput,
+    DefiVanguardV2TaskInput,
     FIOData,
     IssueDetails,
     IssueForList,
@@ -86,6 +94,7 @@ _ArtifactId = server_config._ArtifactId
 _MaxBytes = server_config._MaxBytes
 _DEFAULT_ARTIFACT_MAX_BYTES = server_config._DEFAULT_ARTIFACT_MAX_BYTES
 _TASK_RUN_TOOL_NAME = server_config._TASK_RUN_TOOL_NAME
+_TASK_RUN_TOOL_NAMES = server_config._TASK_RUN_TOOL_NAMES
 _VERSION_CREATION_TOOL_NAMES = server_config._VERSION_CREATION_TOOL_NAMES
 AuditHubSdkContext = server_config.AuditHubSdkContext
 AuditHubServerConfig = server_config.AuditHubServerConfig
@@ -165,11 +174,17 @@ def _set_task_runs_enabled(enabled: bool) -> None:
     global _task_runs_enabled
     _task_runs_enabled = enabled
     if enabled:
-        if not _is_tool_registered(_TASK_RUN_TOOL_NAME):
-            mcp.add_tool(run_orca_task)
+        for tool_name in _TASK_RUN_TOOL_NAMES:
+            if _is_tool_registered(tool_name):
+                continue
+            if tool_name == _TASK_RUN_TOOL_NAMES[0]:
+                mcp.add_tool(run_orca_task)
+            else:
+                mcp.add_tool(run_defi_vanguard_task)
         return
-    if _is_tool_registered(_TASK_RUN_TOOL_NAME):
-        mcp.remove_tool(_TASK_RUN_TOOL_NAME)
+    for tool_name in _TASK_RUN_TOOL_NAMES:
+        if _is_tool_registered(tool_name):
+            mcp.remove_tool(tool_name)
 
 
 def _set_version_creation_enabled(enabled: bool) -> None:
@@ -192,7 +207,7 @@ def _assert_task_runs_enabled() -> None:
     if not _task_runs_enabled:
         raise RuntimeError(
             "AuditHub task runs are disabled. Restart the server with "
-            "--enable-task-runs or AH_ENABLE_TASK_RUNS=1 to enable run_orca_task."
+            "--enable-task-runs or AH_ENABLE_TASK_RUNS=1 to enable task runs."
         )
 
 
@@ -277,6 +292,11 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Register opt-in mutation tools that can create AuditHub project versions.",
     )
+    parser.add_argument(
+        "--list-tools",
+        action="store_true",
+        help="List all registered MCP tools and their schemas, then exit.",
+    )
     return parser
 
 
@@ -305,6 +325,12 @@ def _apply_cli_args_to_config(
         task_runs_enabled=config.task_runs_enabled or args.enable_task_runs,
         version_creation_enabled=config.version_creation_enabled or args.enable_version_creation,
     )
+
+
+async def _list_tools() -> None:
+    """Print the registered MCP tools and their schemas, then exit."""
+    tools = await mcp.list_tools()
+    print(json.dumps([tool.model_dump(mode="json") for tool in tools], indent=2, sort_keys=True))
 
 
 def _ctx() -> AuditHubSdkContext:
@@ -483,6 +509,43 @@ async def get_organization_name_index() -> list[OrganizationNameIndexEntry]:
         return sorted(entries, key=lambda entry: (entry.lookup_key, entry.id))
 
     return await _run_tool(_run, tool_name="get_organization_name_index", safe_args={})
+
+
+@mcp.tool()
+async def get_defi_vanguard_detectors(organization_id: _AhId) -> list[str]:
+    """List all DeFi Vanguard v2 detectors available to an organization."""
+
+    async def _run() -> list[str]:
+        _assert_org_allowed(organization_id)
+        builtin_entries, custom_entries = await vanguard.load_vanguard_detector_catalog(
+            organization_id,
+            fetch_configuration=lambda: _with_api_client(
+                lambda client: ConfigurationApi(client).get_configuration_configuration_get()
+            ),
+            fetch_custom_detectors=lambda org_id: _with_api_client(
+                lambda client: CustomDetectorsOrgLibApi(
+                    client
+                ).get_custom_detectors_organizations_organization_id_custom_detectors_get(  # noqa: E501
+                    organization_id=org_id
+                )
+            ),
+            fetch_custom_detectors_library=lambda: _with_api_client(
+                lambda client: CustomDetectorsStdLibApi(
+                    client
+                ).get_custom_detectors_library_custom_detectors_library_get()
+            ),
+        )
+        entries = sorted(
+            [*builtin_entries, *custom_entries],
+            key=lambda entry: (_normalize_lookup_key(entry.display_name), entry.description),
+        )
+        return [vanguard.format_vanguard_detector_listing_entry(entry) for entry in entries]
+
+    return await _run_tool(
+        _run,
+        tool_name="get_defi_vanguard_detectors",
+        safe_args={"organization_id": organization_id},
+    )
 
 
 @mcp.tool()
@@ -1103,6 +1166,76 @@ async def run_orca_task(
     )
 
 
+async def run_defi_vanguard_task(
+    organization_id: _AhId,
+    project_id: _AhId,
+    version_id: _AhId,
+    detectors: list[DefiVanguardV2DetectorSelectionInput],
+    name: str | None = None,
+    input_limit: list[str] | None = None,
+    cross_version_triage: bool = False,
+    solc: str | None = None,
+    ignore_build_system: bool = False,
+) -> TaskCreation:
+    """Run a DeFi Vanguard task for a specific AuditHub project version."""
+
+    async def _run() -> TaskCreation:
+        _assert_task_runs_enabled()
+        _assert_org_allowed(organization_id)
+        _assert_project_allowed(project_id)
+        task_input = DefiVanguardV2TaskInput(
+            organization_id=organization_id,
+            project_id=project_id,
+            version_id=version_id,
+            detectors=detectors,
+            name=name,
+            input_limit=input_limit,
+            cross_version_triage=cross_version_triage,
+            solc=solc,
+            ignore_build_system=ignore_build_system,
+        )
+        sdk_input = await vanguard.build_vanguard_v2_input(
+            organization_id,
+            task_input,
+            fetch_configuration=lambda: _with_api_client(
+                lambda client: ConfigurationApi(client).get_configuration_configuration_get()
+            ),
+            fetch_custom_detectors=lambda org_id: _with_api_client(
+                lambda client: CustomDetectorsOrgLibApi(
+                    client
+                ).get_custom_detectors_organizations_organization_id_custom_detectors_get(  # noqa: E501
+                    organization_id=org_id
+                )
+            ),
+            fetch_custom_detectors_library=lambda: _with_api_client(
+                lambda client: CustomDetectorsStdLibApi(
+                    client
+                ).get_custom_detectors_library_custom_detectors_library_get()
+            ),
+        )
+        created_task = await _with_api_client(
+            lambda client: ToolsApi(
+                client
+            ).post_tool_vanguard_v2_organizations_organization_id_projects_project_id_versions_version_id_tools_vanguard_v2_post(  # noqa: E501
+                organization_id=organization_id,
+                project_id=project_id,
+                version_id=version_id,
+                defi_vanguard_v2_input=sdk_input,
+            )
+        )
+        return _orca_task_creation_ta.validate_python(created_task)
+
+    return await _run_tool(
+        _run,
+        tool_name=_TASK_RUN_TOOL_NAMES[1],
+        safe_args={
+            "organization_id": organization_id,
+            "project_id": project_id,
+            "version_id": version_id,
+        },
+    )
+
+
 async def create_version_from_url(
     organization_id: _AhId,
     project_id: _AhId,
@@ -1212,9 +1345,14 @@ async def _create_version_from_archive_with_client(
 
 def main() -> None:
     """Entry point for the ``ah-mcp`` console script."""
+    parser = _build_arg_parser()
+    args, _ = parser.parse_known_args()
     try:
-        parser = _build_arg_parser()
-        args, _ = parser.parse_known_args()
+        if args.list_tools:
+            _set_task_runs_enabled(True)
+            _set_version_creation_enabled(True)
+            asyncio.run(_list_tools())
+            return
         settings = _apply_cli_args_to_config(_load_settings_from_cli_args(args), args)
         validate_startup_config(settings)
     except RuntimeError as exc:

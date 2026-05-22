@@ -11,7 +11,9 @@ from tests.sdk_stubs import install_sdk_stubs
 install_sdk_stubs()
 
 import ah_mcp.server as server  # noqa: E402
+import ah_mcp.vanguard as vanguard  # noqa: E402
 from ah_mcp.models import (  # noqa: E402
+    DefiVanguardV2TaskInput,
     OrCaAdHocHintReference,
     OrCaAdHocSpecReference,
     OrCaParametersInput,
@@ -33,14 +35,25 @@ def _orca_task_input() -> OrCaTaskInput:
     )
 
 
+def _vanguard_task_input() -> DefiVanguardV2TaskInput:
+    return DefiVanguardV2TaskInput(
+        organization_id=1,
+        project_id=10,
+        version_id=42,
+        detectors=[("builtin", "hiyul/unchecked-return")],
+    )
+
+
 class TestDisallowedIds(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
         server._allowed_org_ids = frozenset({1})
         server._allowed_project_ids = frozenset({10})
+        vanguard.reset_builtin_vanguard_v2_detectors_cache()
 
     async def asyncTearDown(self) -> None:
         server._allowed_org_ids = frozenset()
         server._allowed_project_ids = frozenset()
+        vanguard.reset_builtin_vanguard_v2_detectors_cache()
         server._set_task_runs_enabled(False)
         server._set_version_creation_enabled(False)
 
@@ -214,6 +227,86 @@ class TestDisallowedIds(unittest.IsolatedAsyncioTestCase):
                 project_id=999,
                 version_id=42,
                 task_input=_orca_task_input(),
+            )
+        self.assertIn("999", str(cm.exception))
+        self.assertNotIn("frozenset", str(cm.exception))
+        mock.assert_not_awaited()
+
+    async def test_defi_vanguard_detectors_disallowed_org_rejected_before_sdk_call(self) -> None:
+        config_mock = AsyncMock(return_value={"vanguard_v2_defi_detectors": []})
+        custom_mock = AsyncMock(return_value=[])
+        stdlib_mock = AsyncMock(return_value={})
+        with (
+            patch.object(
+                server.ConfigurationApi, "get_configuration_configuration_get", config_mock
+            ),
+            patch.object(
+                server.CustomDetectorsOrgLibApi,
+                "get_custom_detectors_organizations_organization_id_custom_detectors_get",
+                custom_mock,
+            ),
+            patch.object(
+                server.CustomDetectorsStdLibApi,
+                "get_custom_detectors_library_custom_detectors_library_get",
+                stdlib_mock,
+            ),
+            self.assertRaises(RuntimeError) as cm,
+        ):
+            await server.get_defi_vanguard_detectors(organization_id=999)
+        self.assertIn("999", str(cm.exception))
+        config_mock.assert_not_awaited()
+        custom_mock.assert_not_awaited()
+        stdlib_mock.assert_not_awaited()
+
+    async def test_run_defi_vanguard_disallowed_org_rejected_before_sdk_call(self) -> None:
+        server._set_task_runs_enabled(True)
+        mock = AsyncMock(return_value={"task_id": 1, "message": "created"})
+        with (
+            patch.object(
+                server.ToolsApi,
+                "post_tool_vanguard_v2_organizations_organization_id_projects_project_id_versions_version_id_tools_vanguard_v2_post",
+                mock,
+            ),
+            self.assertRaises(RuntimeError) as cm,
+        ):
+            task_input = _vanguard_task_input()
+            await server.run_defi_vanguard_task(
+                organization_id=999,
+                project_id=10,
+                version_id=42,
+                detectors=task_input.detectors,
+                name=task_input.name,
+                input_limit=task_input.input_limit,
+                cross_version_triage=task_input.cross_version_triage,
+                solc=task_input.solc,
+                ignore_build_system=task_input.ignore_build_system,
+            )
+        self.assertIn("999", str(cm.exception))
+        self.assertNotIn("frozenset", str(cm.exception))
+        mock.assert_not_awaited()
+
+    async def test_run_defi_vanguard_disallowed_project_rejected_before_sdk_call(self) -> None:
+        server._set_task_runs_enabled(True)
+        mock = AsyncMock(return_value={"task_id": 1, "message": "created"})
+        with (
+            patch.object(
+                server.ToolsApi,
+                "post_tool_vanguard_v2_organizations_organization_id_projects_project_id_versions_version_id_tools_vanguard_v2_post",
+                mock,
+            ),
+            self.assertRaises(RuntimeError) as cm,
+        ):
+            task_input = _vanguard_task_input()
+            await server.run_defi_vanguard_task(
+                organization_id=1,
+                project_id=999,
+                version_id=42,
+                detectors=task_input.detectors,
+                name=task_input.name,
+                input_limit=task_input.input_limit,
+                cross_version_triage=task_input.cross_version_triage,
+                solc=task_input.solc,
+                ignore_build_system=task_input.ignore_build_system,
             )
         self.assertIn("999", str(cm.exception))
         self.assertNotIn("frozenset", str(cm.exception))

@@ -105,6 +105,74 @@ class TaskArtifactContent(BaseModel):
     content_type: str | None = None
 
 
+DefiVanguardV2DetectorSelectionInput = tuple[
+    Literal["builtin", "stdlib", "orglib", "version"],
+    str | int,
+]
+
+
+class DefiVanguardV2TaskInput(BaseModel):
+    """Input payload for launching a DeFi Vanguard v2 task."""
+
+    model_config = ConfigDict(frozen=True)
+
+    organization_id: Annotated[
+        _PositiveId,
+        Field(description="AuditHub organization ID to run the Vanguard task against."),
+    ]
+    project_id: Annotated[
+        _PositiveId,
+        Field(description="AuditHub project ID to run the Vanguard task against."),
+    ]
+    version_id: Annotated[
+        _PositiveId,
+        Field(description="AuditHub version ID to run the Vanguard task against."),
+    ]
+    detectors: Annotated[
+        list[DefiVanguardV2DetectorSelectionInput],
+        Field(
+            min_length=1,
+            description=(
+                "Detector selections for the task as two-item `(type, id)` tuples, "
+                "corresponding to detector entries from the `get_defi_vanguard_detectors` tool."
+            ),
+        ),
+    ]
+    name: Annotated[
+        str | None,
+        Field(description="Optional display name for the Vanguard task."),
+    ] = None
+    input_limit: Annotated[
+        list[str] | None,
+        Field(description="Optional list of paths in the version to limit analysis to."),
+    ] = None
+    cross_version_triage: Annotated[
+        bool,
+        Field(
+            description=(
+                "When true, suppress findings previously discovered for this project "
+                "across versions."
+            )
+        ),
+    ] = False
+    solc: Annotated[
+        str | None,
+        Field(
+            description=(
+                "Optional Solidity compiler version to use for compilation. "
+                "Must be one of the builtin Vanguard solc versions from AuditHub "
+                "configuration. `None` maps to `latest`."
+            )
+        ),
+    ] = None
+    ignore_build_system: Annotated[
+        bool,
+        Field(
+            description="When true, compile without using the project's build system.",
+        ),
+    ] = False
+
+
 class OrCaVersionSpecReference(BaseModel):
     """OrCa V spec reference to a file inside the project version archive."""
 
@@ -284,6 +352,8 @@ class OrCaTaskInput(BaseModel):
 
 __all__ = [
     "Comment",
+    "DefiVanguardV2DetectorSelectionInput",
+    "DefiVanguardV2TaskInput",
     "FIOData",
     "IssueDetails",
     "IssueForList",
