@@ -61,6 +61,9 @@ def test_file_configuration_can_be_overridden_from_env(
     monkeypatch.setenv("AH_ENABLE_TASK_RUNS", "false")
     monkeypatch.setenv("AH_ENABLE_VERSION_CREATION", "true")
 
+    # ensure the following keys are loaded from config
+    monkeypatch.delenv("AH_ALLOWED_PROJECT_IDS", raising=False)
+
     config = load_config_from_path(_DUMMY_CONFIG_PATH, override_from_env_vars=True)
 
     assert config.context.configuration.host == "https://override.example/api/v1"
