@@ -17,6 +17,7 @@ import json
 import sys
 import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated
 
@@ -93,9 +94,6 @@ _AhId = server_config._AhId
 _ArtifactId = server_config._ArtifactId
 _MaxBytes = server_config._MaxBytes
 _DEFAULT_ARTIFACT_MAX_BYTES = server_config._DEFAULT_ARTIFACT_MAX_BYTES
-_TASK_RUN_TOOL_NAME = server_config._TASK_RUN_TOOL_NAME
-_TASK_RUN_TOOL_NAMES = server_config._TASK_RUN_TOOL_NAMES
-_VERSION_CREATION_TOOL_NAMES = server_config._VERSION_CREATION_TOOL_NAMES
 AuditHubSdkContext = server_config.AuditHubSdkContext
 AuditHubServerConfig = server_config.AuditHubServerConfig
 load_config_from_env = server_config.load_config_from_env
@@ -136,6 +134,16 @@ _SdkOrCaHintActual = (
 )
 
 
+@dataclass(frozen=True)
+class RegisteredTool:
+    """Name and callable pair for opt-in MCP tools."""
+
+    #: MCP tool name used for registration and deregistration.
+    name: str
+    #: Callable registered with FastMCP for this tool.
+    fn: Callable[..., object]
+
+
 def _is_tool_registered(tool_name: str) -> bool:
     """Return whether an MCP tool is currently registered."""
     return tool_name in mcp._tool_manager._tools
@@ -169,37 +177,31 @@ def _missing_required_env_vars(exc: ValidationError) -> list[str]:
     return sorted(set(missing_env_vars))
 
 
+def _set_registered_tools_enabled(tools: Sequence[RegisteredTool], enabled: bool) -> None:
+    """Register or unregister a group of MCP tools."""
+    if enabled:
+        for tool in tools:
+            if _is_tool_registered(tool.name):
+                continue
+            mcp.add_tool(tool.fn)
+        return
+    for tool in tools:
+        if _is_tool_registered(tool.name):
+            mcp.remove_tool(tool.name)
+
+
 def _set_task_runs_enabled(enabled: bool) -> None:
     """Enable or disable opt-in task-run MCP tools."""
     global _task_runs_enabled
     _task_runs_enabled = enabled
-    if enabled:
-        for tool_name in _TASK_RUN_TOOL_NAMES:
-            if _is_tool_registered(tool_name):
-                continue
-            if tool_name == _TASK_RUN_TOOL_NAMES[0]:
-                mcp.add_tool(run_orca_task)
-            else:
-                mcp.add_tool(run_defi_vanguard_task)
-        return
-    for tool_name in _TASK_RUN_TOOL_NAMES:
-        if _is_tool_registered(tool_name):
-            mcp.remove_tool(tool_name)
+    _set_registered_tools_enabled(_TASK_RUN_TOOLS, enabled)
 
 
 def _set_version_creation_enabled(enabled: bool) -> None:
     """Enable or disable opt-in version-creation MCP tools."""
     global _version_creation_enabled
     _version_creation_enabled = enabled
-    if enabled:
-        if not _is_tool_registered(_VERSION_CREATION_TOOL_NAMES[0]):
-            mcp.add_tool(create_version_from_archive)
-        if not _is_tool_registered(_VERSION_CREATION_TOOL_NAMES[1]):
-            mcp.add_tool(create_version_from_url)
-        return
-    for tool_name in _VERSION_CREATION_TOOL_NAMES:
-        if _is_tool_registered(tool_name):
-            mcp.remove_tool(tool_name)
+    _set_registered_tools_enabled(_VERSION_CREATION_TOOLS, enabled)
 
 
 def _assert_task_runs_enabled() -> None:
@@ -1157,7 +1159,7 @@ async def run_orca_task(
 
     return await _run_tool(
         _run,
-        tool_name=_TASK_RUN_TOOL_NAME,
+        tool_name=_RUN_ORCA_TASK_TOOL_NAME,
         safe_args={
             "organization_id": organization_id,
             "project_id": project_id,
@@ -1227,7 +1229,7 @@ async def run_defi_vanguard_task(
 
     return await _run_tool(
         _run,
-        tool_name=_TASK_RUN_TOOL_NAMES[1],
+        tool_name=_RUN_DEFI_VANGUARD_TASK_TOOL_NAME,
         safe_args={
             "organization_id": organization_id,
             "project_id": project_id,
@@ -1266,7 +1268,7 @@ async def create_version_from_url(
 
     return await _run_tool(
         _run,
-        tool_name=_VERSION_CREATION_TOOL_NAMES[1],
+        tool_name=_CREATE_VERSION_FROM_URL_TOOL_NAME,
         safe_args={"organization_id": organization_id, "project_id": project_id},
     )
 
@@ -1294,7 +1296,7 @@ async def create_version_from_archive(
 
     return await _run_tool(
         _run,
-        tool_name=_VERSION_CREATION_TOOL_NAMES[0],
+        tool_name=_CREATE_VERSION_FROM_ARCHIVE_TOOL_NAME,
         safe_args={"organization_id": organization_id, "project_id": project_id},
     )
 
@@ -1341,6 +1343,21 @@ async def _create_version_from_archive_with_client(
         response_types_map={"200": "IdAndMessageResponse"},
     ).data
     return _version_creation_ta.validate_python(created_version.model_dump())
+
+
+_RUN_ORCA_TASK_TOOL_NAME = "run_orca_task"
+_RUN_DEFI_VANGUARD_TASK_TOOL_NAME = "run_defi_vanguard_task"
+_CREATE_VERSION_FROM_ARCHIVE_TOOL_NAME = "create_version_from_archive"
+_CREATE_VERSION_FROM_URL_TOOL_NAME = "create_version_from_url"
+
+_TASK_RUN_TOOLS = (
+    RegisteredTool(_RUN_ORCA_TASK_TOOL_NAME, run_orca_task),
+    RegisteredTool(_RUN_DEFI_VANGUARD_TASK_TOOL_NAME, run_defi_vanguard_task),
+)
+_VERSION_CREATION_TOOLS = (
+    RegisteredTool(_CREATE_VERSION_FROM_ARCHIVE_TOOL_NAME, create_version_from_archive),
+    RegisteredTool(_CREATE_VERSION_FROM_URL_TOOL_NAME, create_version_from_url),
+)
 
 
 def main() -> None:

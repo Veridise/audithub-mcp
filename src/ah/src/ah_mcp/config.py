@@ -20,16 +20,6 @@ _MaxBytes = Annotated[int, Field(strict=True, gt=0)]
 
 _DEFAULT_ARTIFACT_MAX_BYTES = 5 * 1024 * 1024
 
-_TASK_RUN_TOOL_NAMES = (
-    "run_orca_task",
-    "run_defi_vanguard_task",
-)
-_TASK_RUN_TOOL_NAME = _TASK_RUN_TOOL_NAMES[0]
-_VERSION_CREATION_TOOL_NAMES = (
-    "create_version_from_archive",
-    "create_version_from_url",
-)
-
 
 class StartupConfigError(RuntimeError):
     """Raised when the server startup configuration is invalid."""
