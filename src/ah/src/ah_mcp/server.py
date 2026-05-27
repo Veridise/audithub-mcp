@@ -85,7 +85,7 @@ from ah_mcp.models import (
     Thread,
     Version,
     VersionCreation,
-    VersionFromArchiveInput,
+    VersionFromFileInput,
     VersionFromUrlInput,
     VersionNameIndexEntry,
 )
@@ -219,7 +219,7 @@ def _assert_version_creation_enabled() -> None:
         raise RuntimeError(
             "AuditHub version creation is disabled. Restart the server with "
             "--enable-version-creation or AH_ENABLE_VERSION_CREATION=1 to enable "
-            "create_version_from_archive and create_version_from_url."
+            "create_version_from_file and create_version_from_url."
         )
 
 
@@ -1273,10 +1273,10 @@ async def create_version_from_url(
     )
 
 
-async def create_version_from_archive(
+async def create_version_from_file(
     organization_id: _AhId,
     project_id: _AhId,
-    version_input: VersionFromArchiveInput,
+    version_input: VersionFromFileInput,
 ) -> VersionCreation:
     """Create an AuditHub project version by uploading a local .zip archive."""
 
@@ -1296,7 +1296,7 @@ async def create_version_from_archive(
 
     return await _run_tool(
         _run,
-        tool_name=_CREATE_VERSION_FROM_ARCHIVE_TOOL_NAME,
+        tool_name=_CREATE_VERSION_FROM_FILE_TOOL_NAME,
         safe_args={"organization_id": organization_id, "project_id": project_id},
     )
 
@@ -1306,7 +1306,7 @@ async def _create_version_from_archive_with_client(
     *,
     organization_id: int,
     project_id: int,
-    version_input: VersionFromArchiveInput,
+    version_input: VersionFromFileInput,
 ) -> VersionCreation:
     """Create a version by sending the .zip archive as multipart upload data."""
     method, url, headers, body, post_params = client.param_serialize(
@@ -1347,7 +1347,7 @@ async def _create_version_from_archive_with_client(
 
 _RUN_ORCA_TASK_TOOL_NAME = "run_orca_task"
 _RUN_DEFI_VANGUARD_TASK_TOOL_NAME = "run_defi_vanguard_task"
-_CREATE_VERSION_FROM_ARCHIVE_TOOL_NAME = "create_version_from_archive"
+_CREATE_VERSION_FROM_FILE_TOOL_NAME = "create_version_from_file"
 _CREATE_VERSION_FROM_URL_TOOL_NAME = "create_version_from_url"
 
 _TASK_RUN_TOOLS = (
@@ -1355,7 +1355,7 @@ _TASK_RUN_TOOLS = (
     RegisteredTool(_RUN_DEFI_VANGUARD_TASK_TOOL_NAME, run_defi_vanguard_task),
 )
 _VERSION_CREATION_TOOLS = (
-    RegisteredTool(_CREATE_VERSION_FROM_ARCHIVE_TOOL_NAME, create_version_from_archive),
+    RegisteredTool(_CREATE_VERSION_FROM_FILE_TOOL_NAME, create_version_from_file),
     RegisteredTool(_CREATE_VERSION_FROM_URL_TOOL_NAME, create_version_from_url),
 )
 

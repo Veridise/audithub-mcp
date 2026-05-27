@@ -61,7 +61,7 @@ class VersionFromUrlInput(BaseModel):
     includes_submodules: bool | None = None
 
 
-class VersionFromArchiveInput(BaseModel):
+class VersionFromFileInput(BaseModel):
     """Input payload for creating an AuditHub project version from a .zip archive."""
 
     model_config = ConfigDict(frozen=True)
@@ -380,6 +380,6 @@ __all__ = [
     "TaskCreation",
     "Thread",
     "Version",
-    "VersionFromArchiveInput",
+    "VersionFromFileInput",
     "VersionNameIndexEntry",
 ]

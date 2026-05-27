@@ -133,7 +133,7 @@ credentials and allowlist IDs; no secrets belong in the agent config file.
 | `get_project_comments` | Get all comments for a project across all versions |
 | `run_orca_task` | Start an OrCa task for a project version; registered only when task runs are explicitly enabled |
 | `run_defi_vanguard_task` | Start a DeFi Vanguard task for a project version; registered only when task runs are explicitly enabled |
-| `create_version_from_archive` | Create a project version by uploading a local `.zip` archive; registered only when version creation is explicitly enabled |
+| `create_version_from_file` | Create a project version by uploading a local `.zip` archive; registered only when version creation is explicitly enabled |
 | `create_version_from_url` | Create a project version from a git repository or archive URL; registered only when version creation is explicitly enabled |
 
 All tools return typed Python objects backed by `audithub-sdk` models. On error, tools raise `RuntimeError` with a sanitized plain-text message; the MCP protocol surfaces this as an error response to the caller.

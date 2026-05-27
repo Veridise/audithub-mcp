@@ -37,7 +37,7 @@ from ah_mcp.models import (  # noqa: E402
     Thread,
     Version,
     VersionCreation,
-    VersionFromArchiveInput,
+    VersionFromFileInput,
     VersionFromUrlInput,
     VersionNameIndexEntry,
 )
@@ -318,7 +318,7 @@ class TestCtxCache(unittest.TestCase):
         self.assertFalse(server._version_creation_enabled)
         self.assertFalse(server._is_tool_registered("run_orca_task"))
         self.assertFalse(server._is_tool_registered("run_defi_vanguard_task"))
-        self.assertFalse(server._is_tool_registered("create_version_from_archive"))
+        self.assertFalse(server._is_tool_registered("create_version_from_file"))
         self.assertFalse(server._is_tool_registered("create_version_from_url"))
 
     def test_main_enables_task_runs_from_env(self) -> None:
@@ -350,7 +350,7 @@ class TestCtxCache(unittest.TestCase):
             with patch.dict(os.environ, allow_env, clear=True), patch.object(server.mcp, "run"):
                 server.main()
             self.assertTrue(server._version_creation_enabled)
-            self.assertTrue(server._is_tool_registered("create_version_from_archive"))
+            self.assertTrue(server._is_tool_registered("create_version_from_file"))
             self.assertTrue(server._is_tool_registered("create_version_from_url"))
         finally:
             server._set_version_creation_enabled(False)
@@ -392,7 +392,7 @@ class TestCtxCache(unittest.TestCase):
             ):
                 server.main()
             self.assertTrue(server._version_creation_enabled)
-            self.assertTrue(server._is_tool_registered("create_version_from_archive"))
+            self.assertTrue(server._is_tool_registered("create_version_from_file"))
             self.assertTrue(server._is_tool_registered("create_version_from_url"))
         finally:
             server._set_version_creation_enabled(False)
@@ -444,7 +444,7 @@ class TestCtxCache(unittest.TestCase):
             mock_print.assert_called_once()
             rendered = mock_print.call_args.args[0]
             self.assertIn('"name": "run_defi_vanguard_task"', rendered)
-            self.assertIn('"name": "create_version_from_archive"', rendered)
+            self.assertIn('"name": "create_version_from_file"', rendered)
             self.assertIn('"name": "create_version_from_url"', rendered)
             self.assertIsNone(server._context)
         finally:
@@ -521,7 +521,7 @@ class TestReadOnlyToolSurface(unittest.TestCase):
         self.assertGreater(len(names), 0)
         self.assertNotIn("run_orca_task", names)
         self.assertNotIn("run_defi_vanguard_task", names)
-        self.assertNotIn("create_version_from_archive", names)
+        self.assertNotIn("create_version_from_file", names)
         self.assertNotIn("create_version_from_url", names)
         for name in names:
             self.assertTrue(name.startswith("get_"))
@@ -532,10 +532,10 @@ class TestReadOnlyToolSurface(unittest.TestCase):
         self.assertIn("run_orca_task", names)
         self.assertIn("run_defi_vanguard_task", names)
 
-    def test_create_version_from_archive_registers_only_when_enabled(self) -> None:
+    def test_create_version_from_file_registers_only_when_enabled(self) -> None:
         server._set_version_creation_enabled(True)
         names = list(server.mcp._tool_manager._tools.keys())
-        self.assertIn("create_version_from_archive", names)
+        self.assertIn("create_version_from_file", names)
 
     def test_create_version_from_url_registers_only_when_enabled(self) -> None:
         server._set_version_creation_enabled(True)
@@ -1121,7 +1121,7 @@ class TestToolCalls(unittest.IsolatedAsyncioTestCase):
         self.assertIn("version creation is disabled", str(cm.exception))
         mock.assert_not_awaited()
 
-    async def test_create_version_from_archive_disabled_prevents_sdk_call(self) -> None:
+    async def test_create_version_from_file_disabled_prevents_sdk_call(self) -> None:
         mock = AsyncMock(return_value=_VERSION_CREATION_DICT)
         with (
             patch.object(
@@ -1131,10 +1131,10 @@ class TestToolCalls(unittest.IsolatedAsyncioTestCase):
             ),
             self.assertRaises(RuntimeError) as cm,
         ):
-            await server.create_version_from_archive(
+            await server.create_version_from_file(
                 organization_id=1,
                 project_id=10,
-                version_input=VersionFromArchiveInput(
+                version_input=VersionFromFileInput(
                     name="v2.0",
                     archive="ARCHIVE_CONTENTS",
                     commit_hash="def456",
@@ -1143,7 +1143,7 @@ class TestToolCalls(unittest.IsolatedAsyncioTestCase):
         self.assertIn("version creation is disabled", str(cm.exception))
         mock.assert_not_awaited()
 
-    async def test_create_version_from_archive_uses_multipart_upload(self) -> None:
+    async def test_create_version_from_file_uses_multipart_upload(self) -> None:
         server._set_version_creation_enabled(True)
 
         class _FakeResponse:
@@ -1185,7 +1185,7 @@ class TestToolCalls(unittest.IsolatedAsyncioTestCase):
             client,
             organization_id=1,
             project_id=10,
-            version_input=VersionFromArchiveInput(
+            version_input=VersionFromFileInput(
                 name="v2.0",
                 archive="/tmp/archive.zip",
                 commit_hash="def456",

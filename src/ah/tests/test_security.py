@@ -14,7 +14,7 @@ from ah_mcp.models import (  # noqa: E402
     OrCaAdHocSpecReference,
     OrCaParametersInput,
     OrCaTaskInput,
-    VersionFromArchiveInput,
+    VersionFromFileInput,
     VersionFromUrlInput,
 )
 
@@ -343,10 +343,10 @@ class TestDisallowedIds(unittest.IsolatedAsyncioTestCase):
             ),
             self.assertRaises(RuntimeError) as cm,
         ):
-            await server.create_version_from_archive(
+            await server.create_version_from_file(
                 organization_id=999,
                 project_id=10,
-                version_input=VersionFromArchiveInput(
+                version_input=VersionFromFileInput(
                     name="v2.0",
                     archive="ARCHIVE_CONTENTS",
                 ),
@@ -366,10 +366,10 @@ class TestDisallowedIds(unittest.IsolatedAsyncioTestCase):
             ),
             self.assertRaises(RuntimeError) as cm,
         ):
-            await server.create_version_from_archive(
+            await server.create_version_from_file(
                 organization_id=1,
                 project_id=999,
-                version_input=VersionFromArchiveInput(
+                version_input=VersionFromFileInput(
                     name="v2.0",
                     archive="ARCHIVE_CONTENTS",
                 ),
@@ -602,10 +602,10 @@ class TestVersionCreationPrivacy(unittest.IsolatedAsyncioTestCase):
             ),
             patch.object(audit_mod.logger, "info") as mock_info,
         ):
-            await server.create_version_from_archive(
+            await server.create_version_from_file(
                 organization_id=1,
                 project_id=10,
-                version_input=VersionFromArchiveInput(
+                version_input=VersionFromFileInput(
                     name="secret-version",
                     archive=archive,
                 ),
