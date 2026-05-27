@@ -385,8 +385,8 @@ def _slice_paginated[T](items: Sequence[T], limit: int | None, offset: int | Non
     return list(items[start:end])
 
 
-def _normalize_lookup_key(name: str) -> str:
-    """Normalize a user-visible name into a deterministic case-insensitive lookup key."""
+def _normalize_sort_key(name: str) -> str:
+    """Normalize a user-visible name into a deterministic case-insensitive sort key."""
     return name.strip().casefold()
 
 
@@ -478,7 +478,7 @@ async def _run_tool[T](
 
 @mcp.tool()
 async def get_my_organizations() -> list[MyOrganization]:
-    """List AuditHub organizations the authenticated user belongs to."""
+    """List details of all AuditHub organizations."""
 
     async def _run() -> list[MyOrganization]:
         organizations = await _with_api_client(
@@ -492,7 +492,7 @@ async def get_my_organizations() -> list[MyOrganization]:
 
 @mcp.tool()
 async def get_organization_name_index() -> list[OrganizationNameIndexEntry]:
-    """List allowlisted AuditHub organizations as deterministic name lookup entries."""
+    """List AuditHub organizations as name and organization id entries."""
 
     async def _run() -> list[OrganizationNameIndexEntry]:
         organizations = await _with_api_client(
@@ -503,12 +503,12 @@ async def get_organization_name_index() -> list[OrganizationNameIndexEntry]:
             OrganizationNameIndexEntry(
                 id=org.id,
                 name=org.name,
-                lookup_key=_normalize_lookup_key(org.name),
+                sort_key=_normalize_sort_key(org.name),
             )
             for org in orgs
             if org.id in _allowed_org_ids
         ]
-        return sorted(entries, key=lambda entry: (entry.lookup_key, entry.id))
+        return sorted(entries, key=lambda entry: (entry.sort_key, entry.id))
 
     return await _run_tool(_run, tool_name="get_organization_name_index", safe_args={})
 
@@ -539,7 +539,7 @@ async def get_defi_vanguard_detectors(organization_id: _AhId) -> list[str]:
         )
         entries = sorted(
             [*builtin_entries, *custom_entries],
-            key=lambda entry: (_normalize_lookup_key(entry.display_name), entry.description),
+            key=lambda entry: (_normalize_sort_key(entry.display_name), entry.description),
         )
         return [vanguard.format_vanguard_detector_listing_entry(entry) for entry in entries]
 
@@ -576,7 +576,7 @@ async def get_project(organization_id: _AhId, project_id: _AhId) -> Project:
 
 @mcp.tool()
 async def get_project_name_index(organization_id: _AhId) -> list[ProjectNameIndexEntry]:
-    """List allowlisted projects in an organization as deterministic name lookup entries."""
+    """List projects in an organization as name and project id entries."""
 
     async def _run() -> list[ProjectNameIndexEntry]:
         _assert_org_allowed(organization_id)
@@ -605,10 +605,10 @@ async def get_project_name_index(organization_id: _AhId) -> list[ProjectNameInde
                 ProjectNameIndexEntry(
                     id=validated_project.id,
                     name=validated_project.name,
-                    lookup_key=_normalize_lookup_key(validated_project.name),
+                    sort_key=_normalize_sort_key(validated_project.name),
                 )
             )
-        return sorted(entries, key=lambda entry: (entry.lookup_key, entry.id))
+        return sorted(entries, key=lambda entry: (entry.sort_key, entry.id))
 
     return await _run_tool(
         _run,
@@ -619,7 +619,7 @@ async def get_project_name_index(organization_id: _AhId) -> list[ProjectNameInde
 
 @mcp.tool()
 async def get_latest_version(organization_id: _AhId, project_id: _AhId) -> Version:
-    """Get the latest version of an AuditHub project."""
+    """Get the latest version details of an AuditHub project."""
 
     async def _run() -> Version:
         _assert_org_allowed(organization_id)
@@ -645,7 +645,7 @@ async def get_latest_version(organization_id: _AhId, project_id: _AhId) -> Versi
 async def get_version_name_index(
     organization_id: _AhId, project_id: _AhId
 ) -> list[VersionNameIndexEntry]:
-    """List project versions as deterministic name lookup entries."""
+    """List project versions as name and version id entries."""
 
     async def _run() -> list[VersionNameIndexEntry]:
         _assert_org_allowed(organization_id)
@@ -662,11 +662,11 @@ async def get_version_name_index(
             VersionNameIndexEntry(
                 id=version.id,
                 name=version.name,
-                lookup_key=_normalize_lookup_key(version.name),
+                sort_key=_normalize_sort_key(version.name),
             )
             for version in _version_ta.validate_python(versions)
         ]
-        return sorted(entries, key=lambda entry: (entry.lookup_key, entry.id))
+        return sorted(entries, key=lambda entry: (entry.sort_key, entry.id))
 
     return await _run_tool(
         _run,
@@ -700,7 +700,7 @@ async def get_task_info(organization_id: _AhId, task_id: _AhId) -> Task:
 
 @mcp.tool()
 async def get_task_artifacts(organization_id: _AhId, task_id: _AhId) -> list[TaskArtifact]:
-    """List sanitized artifact metadata for an AuditHub task."""
+    """List metadata of all artifacts produced by an AuditHub task."""
 
     async def _run() -> list[TaskArtifact]:
         _assert_org_allowed(organization_id)
@@ -728,7 +728,7 @@ async def get_task_artifact(
     artifact_id: _ArtifactId,
     max_bytes: _MaxBytes | None = _DEFAULT_ARTIFACT_MAX_BYTES,
 ) -> TaskArtifactContent:
-    """Fetch an AuditHub task artifact as base64-encoded content."""
+    """Download the artifact blob of an AuditHub task as base64-encoded content."""
 
     async def _run() -> TaskArtifactContent:
         _assert_org_allowed(organization_id)
@@ -790,7 +790,9 @@ async def get_task_logs(organization_id: _AhId, task_id: _AhId, step_code: str) 
 
 @mcp.tool()
 async def get_task_findings(organization_id: _AhId, task_id: _AhId) -> list[FIOData]:
-    """Get findings produced by an AuditHub task execution."""
+    """Get raw findings data produced by an AuditHub task execution.
+
+    This data is large and should not be read directly."""
 
     async def _run() -> list[FIOData]:
         _assert_org_allowed(organization_id)
@@ -1278,7 +1280,7 @@ async def create_version_from_file(
     project_id: _AhId,
     version_input: VersionFromFileInput,
 ) -> VersionCreation:
-    """Create an AuditHub project version by uploading a local .zip archive."""
+    """Create an AuditHub project version by uploading a .zip file of the project source code."""
 
     async def _run() -> VersionCreation:
         _assert_version_creation_enabled()

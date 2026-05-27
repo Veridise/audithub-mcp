@@ -2,9 +2,21 @@
 
 This file is a guide on how to effectively prompt an agent to use AuditHub.
 
-## Uploading Projects
+## Uploading Versions
 
-TODO
+Requirements:
+- Version creation must be enabled in your configuration
+- In order to upload a source code version to AuditHub, you must have an
+  existing configured organization and project set up in your configuration
+  file.
+
+To upload a project, run your agent in the root directory of your project
+directory provide the following prompt:
+
+```
+Upload this directory as a new version in my NAME project on AuditHub.
+The version name should be VERSION NAME.
+```
 
 ## Running OrCa Tasks
 

@@ -24,7 +24,7 @@ class OrganizationNameIndexEntry(BaseModel):
 
     id: int
     name: str
-    lookup_key: str
+    sort_key: str
 
 
 class ProjectNameIndexEntry(BaseModel):
@@ -34,7 +34,7 @@ class ProjectNameIndexEntry(BaseModel):
 
     id: int
     name: str
-    lookup_key: str
+    sort_key: str
 
 
 class VersionNameIndexEntry(BaseModel):
@@ -44,7 +44,7 @@ class VersionNameIndexEntry(BaseModel):
 
     id: int
     name: str
-    lookup_key: str
+    sort_key: str
 
 
 class VersionFromUrlInput(BaseModel):

@@ -586,7 +586,7 @@ class TestToolCalls(unittest.IsolatedAsyncioTestCase):
             server._allowed_org_ids = frozenset({1, 2})
             result = await server.get_organization_name_index()
         self.assertEqual([item.id for item in result], [2, 1])
-        self.assertEqual([item.lookup_key for item in result], ["alpha", "zebra"])
+        self.assertEqual([item.sort_key for item in result], ["alpha", "zebra"])
         self.assertTrue(all(isinstance(item, OrganizationNameIndexEntry) for item in result))
 
     async def test_get_project_returns_project(self) -> None:
@@ -609,7 +609,7 @@ class TestToolCalls(unittest.IsolatedAsyncioTestCase):
             server._allowed_project_ids = frozenset({10, 20})
             result = await server.get_project_name_index(organization_id=1)
         self.assertEqual([item.id for item in result], [10, 20])
-        self.assertEqual([item.lookup_key for item in result], ["audit", "zebra"])
+        self.assertEqual([item.sort_key for item in result], ["audit", "zebra"])
         self.assertTrue(all(isinstance(item, ProjectNameIndexEntry) for item in result))
         self.assertEqual(
             [call.kwargs for call in mock.await_args_list],
@@ -651,7 +651,7 @@ class TestToolCalls(unittest.IsolatedAsyncioTestCase):
             result = await server.get_version_name_index(organization_id=1, project_id=10)
         self.assertEqual([item.id for item in result], [44, 43, 42])
         self.assertEqual(
-            [item.lookup_key for item in result],
+            [item.sort_key for item in result],
             ["alpha", "release candidate", "v1.0"],
         )
         self.assertTrue(all(isinstance(item, VersionNameIndexEntry) for item in result))
@@ -1416,8 +1416,8 @@ class TestToolCalls(unittest.IsolatedAsyncioTestCase):
             await server.get_my_organizations()
         self.assertNotIn("network secret", str(cm.exception))
 
-    def test_normalize_lookup_key(self) -> None:
-        self.assertEqual(server._normalize_lookup_key("  AcMe DAO  "), "acme dao")
+    def test_normalize_sort_key(self) -> None:
+        self.assertEqual(server._normalize_sort_key("  AcMe DAO  "), "acme dao")
 
 
 class TestFastMCPSchemaValidation(unittest.IsolatedAsyncioTestCase):
