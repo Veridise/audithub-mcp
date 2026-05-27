@@ -2,8 +2,8 @@
 
 Instructions for AI agents working in this repository.
 
-Repository-wide project details: `./doc/architecture.md`
-Coding conventions: `./doc/conventions.md`
+Repository-wide project details: `./docs/architecture.md`
+Coding conventions: `./docs/llm-conventions.md`
 
 ## Project Structure
 
