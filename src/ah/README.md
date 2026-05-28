@@ -125,6 +125,7 @@ credentials and allowlist IDs; no secrets belong in the agent config file.
 | `get_task_artifact` | Fetch a task artifact by ID as base64-encoded content |
 | `get_task_logs` | Get logs for a specific step of a task |
 | `get_task_findings` | Get findings produced by a task execution |
+| `parse_findings_from_task_log` | Parse one or more task log files into JSON containing findings plus counts written to a local absolute output path |
 | `get_version_comments` | Get comments for a specific project version |
 | `get_version_comment_threads` | Get comment threads for a specific project version |
 | `get_thread_comments` | Get comments for a specific thread within a project version |
@@ -150,6 +151,7 @@ ID-based tools.
 - **Opt-in DeFi Vanguard task execution.** The `run_defi_vanguard_task` mutation tool is registered under the same task-run opt-in gate. Its inputs are flattened at the top level: `organization_id`, `project_id`, `version_id`, detector selections, and the runtime options. Pass detector selections as two-item JSON arrays `[type, id]`, where builtin selectors use a built-in detector code from `get_defi_vanguard_detectors`, and custom selectors use the catalog id shown by the same tool. The server resolves those selections through the backend detector catalog before calling the generated DeFi Vanguard v2 POST endpoint.
 - **On-chain OrCa mode.** When launching OrCa against already deployed contracts, pass `deployment_info_file` as a path ending in `.deployment.json`. The server normalizes that into `on_chain=True` and rejects mismatched paths early so callers do not accidentally launch a local Foundry-style run.
 - **Opt-in version creation.** The `create_version_from_url` mutation tool is registered only when `AH_ENABLE_VERSION_CREATION=1` or `--enable-version-creation` is supplied. It calls the generated project version URL POST endpoint through `audithub-sdk`.
+- **Local findings parsing.** The `parse_findings_from_task_log` utility tool reads one or more local task log files, extracts findings with the shared log parser, and writes a JSON file containing the parsed findings plus the total finding count and per-log counts. It does not call the AuditHub API.
 - **Detector catalog cache.** The DeFi Vanguard v2 built-in detector list is fetched lazily from the AuditHub configuration endpoint and cached in-process for one day. Custom detectors are fetched live on each request from both the organization library and the standard library.
 - **Detector listing format.** `get_defi_vanguard_detectors` returns one block per detector. Each block starts with `detector: <json>` where `<json>` is a JSON value matching `DefiVanguardV2DetectorSelectionInput`, followed by `title:`. Standard-library custom detectors also include `description:` loaded from the detector payload. Each block ends with `------`.
 - **Credential isolation.** OIDC credentials are read from the environment once at startup and passed into `audithub_sdk_ext.AuthenticatedApiClient`. They are never accepted as tool arguments and are not surfaced in tool outputs or sanitized error messages.

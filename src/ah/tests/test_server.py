@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import json
 import os
 import sys
+import textwrap
 import unittest
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -446,6 +449,7 @@ class TestCtxCache(unittest.TestCase):
             self.assertIn('"name": "run_defi_vanguard_task"', rendered)
             self.assertIn('"name": "create_version_from_file"', rendered)
             self.assertIn('"name": "create_version_from_url"', rendered)
+            self.assertIn('"name": "parse_findings_from_task_log"', rendered)
             self.assertIsNone(server._context)
         finally:
             server._set_task_runs_enabled(False)
@@ -524,7 +528,11 @@ class TestReadOnlyToolSurface(unittest.TestCase):
         self.assertNotIn("create_version_from_file", names)
         self.assertNotIn("create_version_from_url", names)
         for name in names:
-            self.assertTrue(name.startswith("get_"))
+            self.assertTrue(
+                name.startswith("get_") or name == "parse_findings_from_task_log",
+                msg=f"unexpected default tool name: {name}",
+            )
+        self.assertIn("parse_findings_from_task_log", names)
 
     def test_run_orca_task_registers_only_when_enabled(self) -> None:
         server._set_task_runs_enabled(True)
@@ -749,6 +757,71 @@ class TestToolCalls(unittest.IsolatedAsyncioTestCase):
             result = await server.get_task_findings(organization_id=1, task_id=99)
         self.assertEqual(result[0].analysis_result_id, "analysis-1")
         self.assertIsInstance(result[0], FIOData)
+
+    async def test_parse_findings_from_task_log_writes_json_and_returns_summary(self) -> None:
+        first_log_contents = textwrap.dedent(
+            """
+            [Medium] First finding
+            Reported By: vanguard:hiyul/unchecked-return
+            Details:
+            First line
+            Second line
+
+            """
+        ).strip()
+        second_log_contents = textwrap.dedent(
+            """
+            [Low] Second finding
+            Reported By: vanguard:stdlib/library-guard
+            Details:
+            Another finding
+            """
+        ).strip()
+        with TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            first_log_path = tmp_path / "task-1.log"
+            second_log_path = tmp_path / "task-2.log"
+            output_path = tmp_path / "findings.json"
+            first_log_path.write_text(first_log_contents, encoding="utf-8")
+            second_log_path.write_text(second_log_contents, encoding="utf-8")
+
+            result = await server.parse_findings_from_task_log(
+                log_file_paths=[str(first_log_path), str(second_log_path)],
+                output_file_path=str(output_path),
+            )
+
+            self.assertIsInstance(result, server.FindingsParseResult)
+            self.assertEqual(result.num_findings, 2)
+            self.assertEqual(
+                result.num_findings_by_log_file_path,
+                {
+                    str(first_log_path): 1,
+                    str(second_log_path): 1,
+                },
+            )
+            rendered = json.loads(output_path.read_text(encoding="utf-8"))
+            self.assertEqual(
+                rendered,
+                {
+                    "findings": [
+                        {
+                            "title": "First finding",
+                            "detector": "hiyul/unchecked-return",
+                            "description": "First line\nSecond line",
+                        },
+                        {
+                            "title": "Second finding",
+                            "detector": "stdlib/library-guard",
+                            "description": "Another finding",
+                        },
+                    ],
+                    "num_findings": 2,
+                    "num_findings_by_log_file_path": {
+                        str(first_log_path): 1,
+                        str(second_log_path): 1,
+                    },
+                },
+            )
 
     async def test_run_orca_task_disabled_prevents_sdk_call(self) -> None:
         mock = AsyncMock(return_value=_TASK_CREATION_DICT)

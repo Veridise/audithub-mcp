@@ -105,6 +105,15 @@ class TaskArtifactContent(BaseModel):
     content_type: str | None = None
 
 
+class FindingsParseResult(BaseModel):
+    """Summary returned after parsing a task log into findings JSON."""
+
+    model_config = ConfigDict(frozen=True)
+
+    num_findings: Annotated[int, Field(ge=0)]
+    num_findings_by_log_file_path: dict[str, Annotated[int, Field(ge=0)]]
+
+
 DefiVanguardV2DetectorSelectionInput = tuple[
     Literal["builtin", "stdlib", "orglib", "version"],
     str | int,
@@ -378,6 +387,7 @@ __all__ = [
     "TaskArtifact",
     "TaskArtifactContent",
     "TaskCreation",
+    "FindingsParseResult",
     "Thread",
     "Version",
     "VersionFromFileInput",

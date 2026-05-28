@@ -17,7 +17,7 @@ import json
 import sys
 import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Annotated
 
@@ -53,12 +53,13 @@ from mcp.server.fastmcp import FastMCP
 from pydantic import Field, TypeAdapter, ValidationError
 
 from ah_mcp import config as server_config
-from ah_mcp import vanguard
+from ah_mcp import parse_fio_logs, vanguard
 from ah_mcp.audit import log_call_error, log_call_start, log_call_success
 from ah_mcp.models import (
     Comment,
     DefiVanguardV2DetectorSelectionInput,
     DefiVanguardV2TaskInput,
+    FindingsParseResult,
     FIOData,
     IssueDetails,
     IssueForList,
@@ -133,6 +134,7 @@ _SdkOrCaHintActual = (
     HintFromVersion | HintFromStandardLibrary | HintFromOrganizationLibrary | HintAdHoc
 )
 
+_PARSE_FINDINGS_FROM_TASK_LOG_TOOL_NAME = "parse_findings_from_task_log"
 
 @dataclass(frozen=True)
 class RegisteredTool:
@@ -416,6 +418,15 @@ def _response_header(headers: Mapping[str, str] | None, name: str) -> str | None
         if key.casefold() == folded_name:
             return value
     return None
+
+
+def _write_output_file(output_file_path: str, contents: str) -> None:
+    """Write text content to a local file with a sanitized error message."""
+    output_path = Path(output_file_path)
+    try:
+        output_path.write_text(contents, encoding="utf-8")
+    except OSError as exc:
+        raise RuntimeError(f"Failed to write output file {output_path!s}: {exc}") from None
 
 
 async def _with_api_client[T](fn: Callable[[AuthenticatedApiClient], Awaitable[T]]) -> T:
@@ -786,6 +797,48 @@ async def get_task_logs(organization_id: _AhId, task_id: _AhId, step_code: str) 
         tool_name="get_task_logs",
         safe_args={"organization_id": organization_id, "task_id": task_id},
     )
+
+
+@mcp.tool()
+async def parse_findings_from_task_log(
+    log_file_paths: Annotated[
+        list[str],
+        Field(
+            min_length=1,
+            description="Absolute paths to one or more task log files to parse.",
+        ),
+    ],
+    output_file_path: Annotated[
+        str,
+        Field(min_length=1, description="Absolute path to write the JSON summary to."),
+    ],
+) -> FindingsParseResult:
+    """Parse findings from one or more task log files (as retrieved with get_task_logs)
+    and write a JSON summary.
+    """
+
+    async def _run() -> FindingsParseResult:
+        log_entries: list[tuple[str, str]] = []
+        for log_file_path in log_file_paths:
+            log_path = Path(log_file_path)
+            try:
+                log_contents = log_path.read_text(encoding="utf-8")
+            except OSError as exc:
+                raise RuntimeError(f"Failed to read log file {log_path!s}: {exc}") from None
+            log_entries.append((log_file_path, log_contents))
+
+        parsed = parse_fio_logs.parse_logs(log_entries)
+        payload = asdict(parsed)
+        _write_output_file(
+            output_file_path,
+            json.dumps(payload, indent=2, sort_keys=True) + "\n",
+        )
+        return FindingsParseResult(
+            num_findings=parsed.num_findings,
+            num_findings_by_log_file_path=parsed.num_findings_by_log_file_path,
+        )
+
+    return await _run_tool(_run, tool_name="parse_findings_from_task_log")
 
 
 @mcp.tool()
