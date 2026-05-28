@@ -137,6 +137,7 @@ _SdkOrCaHintActual = (
 
 _PARSE_FINDINGS_FROM_TASK_LOG_TOOL_NAME = "parse_findings_from_task_log"
 
+
 @dataclass(frozen=True)
 class RegisteredTool:
     """Name and callable pair for opt-in MCP tools."""
@@ -780,28 +781,59 @@ async def get_task_artifact(
 async def get_task_logs(
     organization_id: _AhId,
     task_id: _AhId,
-    step_code: str,
-    output_file_path: Annotated[str, Field(min_length=1)],
+    step_codes: Annotated[
+        list[str],
+        Field(
+            min_length=1,
+            description=(
+                "List of task step codes to fetch logs for. Each step code is paired "
+                "with the output path at the same index."
+            ),
+        ),
+    ],
+    output_paths: Annotated[
+        list[str],
+        Field(
+            min_length=1,
+            description=(
+                "List of local absolute output file paths to write the logs to. The number of "
+                "output paths must match the number of step codes so each log is "
+                "written to a separate file."
+            ),
+        ),
+    ],
 ) -> TaskLogsWriteResult:
-    """Get logs for a specific step of an AuditHub task."""
+    """Get logs for one or more AuditHub task steps and write each to a file.
+
+    Findings can be parsed from the logs with the parse_findings_from_task_log tool.
+    """
 
     async def _run() -> TaskLogsWriteResult:
         _assert_org_allowed(organization_id)
-        logs = await _with_api_client(
-            lambda client: TasksApi(
-                client
-            ).get_output_organizations_organization_id_tasks_task_id_step_code_output_get(  # noqa: E501
-                organization_id=organization_id,
-                task_id=task_id,
-                step_code=step_code,
+        if len(step_codes) != len(output_paths):
+            raise ValueError("step_codes and output_paths must have the same length.")
+
+        total_logs = 0
+        for step_code, output_file_path in zip(step_codes, output_paths, strict=True):
+
+            async def _fetch_logs(client: object, step_code: str = step_code) -> object:
+                return await TasksApi(
+                    client
+                ).get_output_organizations_organization_id_tasks_task_id_step_code_output_get(  # noqa: E501
+                    organization_id=organization_id,
+                    task_id=task_id,
+                    step_code=step_code,
+                )
+
+            logs = await _with_api_client(_fetch_logs)
+            validated_logs = _str_list_ta.validate_python(logs)
+            _write_output_file(
+                output_file_path,
+                "\n".join(validated_logs) + ("\n" if validated_logs else ""),
             )
-        )
-        validated_logs = _str_list_ta.validate_python(logs)
-        _write_output_file(
-            output_file_path,
-            "\n".join(validated_logs) + ("\n" if validated_logs else ""),
-        )
-        return TaskLogsWriteResult(num_logs=len(validated_logs))
+            total_logs += len(validated_logs)
+
+        return TaskLogsWriteResult(num_logs=total_logs)
 
     return await _run_tool(
         _run,

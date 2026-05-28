@@ -123,7 +123,7 @@ credentials and allowlist IDs; no secrets belong in the agent config file.
 | `get_task_info` | Get status and details for an AuditHub task |
 | `get_task_artifacts` | List sanitized artifact metadata for an AuditHub task |
 | `get_task_artifact` | Fetch a task artifact by ID as base64-encoded content |
-| `get_task_logs` | Get logs for a specific step of a task and write them to a local output file |
+| `get_task_logs` | Get logs for one or more steps of a task and write each result to a local output file |
 | `get_task_findings` | Fetch findings for a task and write them to a local output file |
 | `parse_findings_from_task_log` | Parse one or more task log files into JSON containing findings plus counts written to a local absolute output path |
 | `get_version_comments` | Get comments for a specific project version |

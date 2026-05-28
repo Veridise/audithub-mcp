@@ -117,8 +117,8 @@ class TestDisallowedIds(unittest.IsolatedAsyncioTestCase):
                 await server.get_task_logs(
                     organization_id=999,
                     task_id=10,
-                    step_code="analysis",
-                    output_file_path=str(output_path),
+                    step_codes=["analysis"],
+                    output_paths=[str(output_path)],
                 )
         self.assertIn("999", str(cm.exception))
         self.assertNotIn("frozenset", str(cm.exception))
@@ -131,8 +131,8 @@ class TestDisallowedIds(unittest.IsolatedAsyncioTestCase):
                 result = await server.get_task_logs(
                     organization_id=1,
                     task_id=10,
-                    step_code="analysis",
-                    output_file_path=str(output_path),
+                    step_codes=["analysis"],
+                    output_paths=[str(output_path)],
                 )
             self.assertEqual(result.num_logs, 2)
             self.assertEqual(output_path.read_text(encoding="utf-8"), "line 1\nline 2\n")
@@ -478,8 +478,8 @@ class TestStepCodePrivacy(unittest.IsolatedAsyncioTestCase):
                 await server.get_task_logs(
                     organization_id=1,
                     task_id=1,
-                    step_code=step_code,
-                    output_file_path=str(output_path),
+                    step_codes=[step_code],
+                    output_paths=[str(output_path)],
                 )
         for call in mock_info.call_args_list:
             args = " ".join(str(arg) for arg in call.args)

@@ -740,21 +740,35 @@ class TestToolCalls(unittest.IsolatedAsyncioTestCase):
 
     async def test_get_task_logs_returns_list(self) -> None:
         with TemporaryDirectory() as tmpdir:
-            output_path = Path(tmpdir) / "task-logs.txt"
+            output_path_1 = Path(tmpdir) / "task-logs-1.txt"
+            output_path_2 = Path(tmpdir) / "task-logs-2.txt"
             with patch.object(
                 server.TasksApi,
                 "get_output_organizations_organization_id_tasks_task_id_step_code_output_get",
-                AsyncMock(return_value=["a", "b"]),
+                AsyncMock(side_effect=[["a", "b"], ["c"]]),
             ):
                 result = await server.get_task_logs(
                     organization_id=1,
                     task_id=99,
-                    step_code="analysis",
-                    output_file_path=str(output_path),
+                    step_codes=["analysis", "triage"],
+                    output_paths=[str(output_path_1), str(output_path_2)],
                 )
             self.assertIsInstance(result, server.TaskLogsWriteResult)
-            self.assertEqual(result.num_logs, 2)
-            self.assertEqual(output_path.read_text(encoding="utf-8"), "a\nb\n")
+            self.assertEqual(result.num_logs, 3)
+            self.assertEqual(output_path_1.read_text(encoding="utf-8"), "a\nb\n")
+            self.assertEqual(output_path_2.read_text(encoding="utf-8"), "c\n")
+
+    async def test_get_task_logs_rejects_mismatched_pairs(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            output_path = Path(tmpdir) / "task-logs.txt"
+            with self.assertRaises(RuntimeError) as cm:
+                await server.get_task_logs(
+                    organization_id=1,
+                    task_id=99,
+                    step_codes=["analysis", "triage"],
+                    output_paths=[str(output_path)],
+                )
+        self.assertIn("internal error", str(cm.exception).lower())
 
     async def test_get_task_findings_writes_json_and_returns_count(self) -> None:
         with TemporaryDirectory() as tmpdir:
