@@ -114,6 +114,14 @@ class FindingsParseResult(BaseModel):
     num_findings_by_log_file_path: dict[str, Annotated[int, Field(ge=0)]]
 
 
+class TaskLogsWriteResult(BaseModel):
+    """Summary returned after writing task logs to a local file."""
+
+    model_config = ConfigDict(frozen=True)
+
+    num_logs: Annotated[int, Field(ge=0)]
+
+
 DefiVanguardV2DetectorSelectionInput = tuple[
     Literal["builtin", "stdlib", "orglib", "version"],
     str | int,
@@ -388,6 +396,7 @@ __all__ = [
     "TaskArtifactContent",
     "TaskCreation",
     "FindingsParseResult",
+    "TaskLogsWriteResult",
     "Thread",
     "Version",
     "VersionFromFileInput",

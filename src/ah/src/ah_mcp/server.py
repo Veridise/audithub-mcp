@@ -83,6 +83,7 @@ from ah_mcp.models import (
     TaskArtifact,
     TaskArtifactContent,
     TaskCreation,
+    TaskLogsWriteResult,
     Thread,
     Version,
     VersionCreation,
@@ -776,10 +777,15 @@ async def get_task_artifact(
 
 
 @mcp.tool()
-async def get_task_logs(organization_id: _AhId, task_id: _AhId, step_code: str) -> list[str]:
+async def get_task_logs(
+    organization_id: _AhId,
+    task_id: _AhId,
+    step_code: str,
+    output_file_path: Annotated[str, Field(min_length=1)],
+) -> TaskLogsWriteResult:
     """Get logs for a specific step of an AuditHub task."""
 
-    async def _run() -> list[str]:
+    async def _run() -> TaskLogsWriteResult:
         _assert_org_allowed(organization_id)
         logs = await _with_api_client(
             lambda client: TasksApi(
@@ -790,7 +796,12 @@ async def get_task_logs(organization_id: _AhId, task_id: _AhId, step_code: str) 
                 step_code=step_code,
             )
         )
-        return _str_list_ta.validate_python(logs)
+        validated_logs = _str_list_ta.validate_python(logs)
+        _write_output_file(
+            output_file_path,
+            "\n".join(validated_logs) + ("\n" if validated_logs else ""),
+        )
+        return TaskLogsWriteResult(num_logs=len(validated_logs))
 
     return await _run_tool(
         _run,
@@ -842,12 +853,16 @@ async def parse_findings_from_task_log(
 
 
 @mcp.tool()
-async def get_task_findings(organization_id: _AhId, task_id: _AhId) -> list[FIOData]:
+async def get_task_findings(
+    organization_id: _AhId,
+    task_id: _AhId,
+    output_file_path: Annotated[str, Field(min_length=1)],
+) -> FindingsParseResult:
     """Get raw findings data produced by an AuditHub task execution.
 
     This data is large and should not be read directly."""
 
-    async def _run() -> list[FIOData]:
+    async def _run() -> FindingsParseResult:
         _assert_org_allowed(organization_id)
         findings = await _with_api_client(
             lambda client: TasksApi(
@@ -857,7 +872,17 @@ async def get_task_findings(organization_id: _AhId, task_id: _AhId) -> list[FIOD
                 task_id=task_id,
             )
         )
-        return _fio_data_ta.validate_python(findings)
+        validated_findings = _fio_data_ta.validate_python(findings)
+        _write_output_file(
+            output_file_path,
+            json.dumps(
+                {"findings": [finding.model_dump(mode="json") for finding in validated_findings]},
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n",
+        )
+        return FindingsParseResult(num_findings=len(validated_findings))
 
     return await _run_tool(
         _run,

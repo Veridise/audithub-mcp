@@ -22,7 +22,6 @@ import ah_mcp.vanguard as vanguard  # noqa: E402
 from ah_mcp.models import (  # noqa: E402
     Comment,
     DefiVanguardV2TaskInput,
-    FIOData,
     IssueDetails,
     IssueForList,
     MyOrganization,
@@ -740,23 +739,53 @@ class TestToolCalls(unittest.IsolatedAsyncioTestCase):
         self.assertIn("exceeding max_bytes=3", str(cm.exception))
 
     async def test_get_task_logs_returns_list(self) -> None:
-        with patch.object(
-            server.TasksApi,
-            "get_output_organizations_organization_id_tasks_task_id_step_code_output_get",
-            AsyncMock(return_value=["a", "b"]),
-        ):
-            result = await server.get_task_logs(organization_id=1, task_id=99, step_code="analysis")
-        self.assertEqual(result, ["a", "b"])
+        with TemporaryDirectory() as tmpdir:
+            output_path = Path(tmpdir) / "task-logs.txt"
+            with patch.object(
+                server.TasksApi,
+                "get_output_organizations_organization_id_tasks_task_id_step_code_output_get",
+                AsyncMock(return_value=["a", "b"]),
+            ):
+                result = await server.get_task_logs(
+                    organization_id=1,
+                    task_id=99,
+                    step_code="analysis",
+                    output_file_path=str(output_path),
+                )
+            self.assertIsInstance(result, server.TaskLogsWriteResult)
+            self.assertEqual(result.num_logs, 2)
+            self.assertEqual(output_path.read_text(encoding="utf-8"), "a\nb\n")
 
-    async def test_get_task_findings_returns_list(self) -> None:
-        with patch.object(
-            server.TasksApi,
-            "get_task_findings_organizations_organization_id_tasks_task_id_findings_get",
-            AsyncMock(return_value=[_FINDING_DICT]),
-        ):
-            result = await server.get_task_findings(organization_id=1, task_id=99)
-        self.assertEqual(result[0].analysis_result_id, "analysis-1")
-        self.assertIsInstance(result[0], FIOData)
+    async def test_get_task_findings_writes_json_and_returns_count(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            output_path = Path(tmpdir) / "task-findings.json"
+            with patch.object(
+                server.TasksApi,
+                "get_task_findings_organizations_organization_id_tasks_task_id_findings_get",
+                AsyncMock(return_value=[_FINDING_DICT]),
+            ):
+                result = await server.get_task_findings(
+                    organization_id=1,
+                    task_id=99,
+                    output_file_path=str(output_path),
+                )
+            self.assertIsInstance(result, server.FindingsParseResult)
+            self.assertEqual(result.num_findings, 1)
+            rendered = json.loads(output_path.read_text(encoding="utf-8"))
+            self.assertEqual(
+                rendered,
+                {
+                    "findings": [
+                        {
+                            "state_digest": 123,
+                            "analysis_result_id": "analysis-1",
+                            "is_filtered": False,
+                            "data": {"title": "Unchecked call return value"},
+                            "actions": [],
+                        }
+                    ]
+                },
+            )
 
     async def test_parse_findings_from_task_log_writes_json_and_returns_summary(self) -> None:
         first_log_contents = textwrap.dedent(

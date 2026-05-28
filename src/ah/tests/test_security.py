@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -78,8 +80,14 @@ class TestDisallowedIds(unittest.IsolatedAsyncioTestCase):
         mock.assert_not_awaited()
 
     async def test_task_findings_disallowed_org(self) -> None:
-        with self.assertRaises(RuntimeError) as cm:
-            await server.get_task_findings(organization_id=999, task_id=10)
+        with TemporaryDirectory() as tmpdir:
+            output_path = Path(tmpdir) / "findings.json"
+            with self.assertRaises(RuntimeError) as cm:
+                await server.get_task_findings(
+                    organization_id=999,
+                    task_id=10,
+                    output_file_path=str(output_path),
+                )
         self.assertIn("999", str(cm.exception))
         self.assertNotIn("frozenset", str(cm.exception))
 
@@ -92,9 +100,42 @@ class TestDisallowedIds(unittest.IsolatedAsyncioTestCase):
                 mock,
             ),
             self.assertRaises(RuntimeError),
+            TemporaryDirectory() as tmpdir,
         ):
-            await server.get_task_findings(organization_id=999, task_id=10)
+            output_path = Path(tmpdir) / "findings.json"
+            await server.get_task_findings(
+                organization_id=999,
+                task_id=10,
+                output_file_path=str(output_path),
+            )
         mock.assert_not_awaited()
+
+    async def test_task_logs_disallowed_org(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            output_path = Path(tmpdir) / "logs.txt"
+            with self.assertRaises(RuntimeError) as cm:
+                await server.get_task_logs(
+                    organization_id=999,
+                    task_id=10,
+                    step_code="analysis",
+                    output_file_path=str(output_path),
+                )
+        self.assertIn("999", str(cm.exception))
+        self.assertNotIn("frozenset", str(cm.exception))
+
+    async def test_task_logs_writes_to_output_file(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            output_path = Path(tmpdir) / "logs.txt"
+            mock = AsyncMock(return_value=["line 1", "line 2"])
+            with patch.object(server, "_with_api_client", mock):
+                result = await server.get_task_logs(
+                    organization_id=1,
+                    task_id=10,
+                    step_code="analysis",
+                    output_file_path=str(output_path),
+                )
+            self.assertEqual(result.num_logs, 2)
+            self.assertEqual(output_path.read_text(encoding="utf-8"), "line 1\nline 2\n")
 
     async def test_task_artifacts_disallowed_org(self) -> None:
         with self.assertRaises(RuntimeError) as cm:
@@ -424,15 +465,22 @@ class TestStepCodePrivacy(unittest.IsolatedAsyncioTestCase):
         import ah_mcp.audit as audit_mod
 
         step_code = "../../../etc/passwd"
-        with (
-            patch.object(
-                server.TasksApi,
-                "get_output_organizations_organization_id_tasks_task_id_step_code_output_get",
-                AsyncMock(return_value=[]),
-            ),
-            patch.object(audit_mod.logger, "info") as mock_info,
-        ):
-            await server.get_task_logs(organization_id=1, task_id=1, step_code=step_code)
+        with TemporaryDirectory() as tmpdir:
+            output_path = Path(tmpdir) / "logs.txt"
+            with (
+                patch.object(
+                    server.TasksApi,
+                    "get_output_organizations_organization_id_tasks_task_id_step_code_output_get",
+                    AsyncMock(return_value=[]),
+                ),
+                patch.object(audit_mod.logger, "info") as mock_info,
+            ):
+                await server.get_task_logs(
+                    organization_id=1,
+                    task_id=1,
+                    step_code=step_code,
+                    output_file_path=str(output_path),
+                )
         for call in mock_info.call_args_list:
             args = " ".join(str(arg) for arg in call.args)
             self.assertNotIn(step_code, args)
