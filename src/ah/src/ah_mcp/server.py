@@ -19,7 +19,7 @@ import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any, cast
 
 import audithub_sdk
 from audithub_sdk.api.configuration_api import ConfigurationApi
@@ -49,7 +49,9 @@ from audithub_sdk.models.v_spec_from_organization_library import VSpecFromOrgani
 from audithub_sdk.models.v_spec_from_standard_library import VSpecFromStandardLibrary
 from audithub_sdk.models.v_spec_from_version import VSpecFromVersion
 from audithub_sdk_ext import AuthenticatedApiClient, OIDCClientCredentialsContext
-from mcp.server.fastmcp import FastMCP
+from mcp import types as mcp_types
+from mcp.server.fastmcp import Context, FastMCP
+from mcp.shared.exceptions import McpError
 from pydantic import Field, TypeAdapter, ValidationError
 
 from ah_mcp import config as server_config
@@ -90,6 +92,7 @@ from ah_mcp.models import (
     VersionFromFileInput,
     VersionFromUrlInput,
     VersionNameIndexEntry,
+    WaitForTaskCompletionResult,
 )
 
 _AhId = server_config._AhId
@@ -109,6 +112,7 @@ __all__ = [
 ]
 
 mcp = FastMCP("ah")
+mcp._mcp_server.experimental.enable_tasks()
 
 
 _context: AuditHubSdkContext | None = None
@@ -135,7 +139,19 @@ _SdkOrCaHintActual = (
     HintFromVersion | HintFromStandardLibrary | HintFromOrganizationLibrary | HintAdHoc
 )
 
-_PARSE_FINDINGS_FROM_TASK_LOG_TOOL_NAME = "parse_findings_from_task_log"
+_WAIT_FOR_TASK_COMPLETION_TOOL_NAME = "wait_for_task_completion"
+_TASK_COMPLETION_POLL_INTERVAL_SECONDS = 10.0
+_PENDING_STEP_STATUSES = {"pending", "queued", "running", "started", "in_progress"}
+_TERMINAL_TASK_STATUSES = {
+    "finished",
+    "failed",
+    "succeeded",
+    "success",
+    "completed",
+    "cancelled",
+    "canceled",
+    "skipped",
+}
 
 
 @dataclass(frozen=True)
@@ -411,6 +427,13 @@ def _task_artifacts(task: Task) -> list[TaskArtifact]:
     ]
 
 
+def _task_has_pending_steps(task: Task) -> bool:
+    """Return whether *task* still has at least one pending step."""
+    if task.steps is None:
+        return task.status.casefold() not in _TERMINAL_TASK_STATUSES
+    return any(step.status.casefold() in _PENDING_STEP_STATUSES for step in task.steps)
+
+
 def _response_header(headers: Mapping[str, str] | None, name: str) -> str | None:
     """Read a response header without depending on a concrete header mapping type."""
     if headers is None:
@@ -450,7 +473,7 @@ async def _run_tool[T](
     fn: Callable[[], T | Awaitable[T]],
     *,
     tool_name: str = "",
-    safe_args: dict[str, int | None] | None = None,
+    safe_args: dict[str, int | float | None] | None = None,
 ) -> T:
     """Execute a tool function, sanitizing exceptions to prevent secret leakage."""
     if tool_name:
@@ -469,6 +492,10 @@ async def _run_tool[T](
             log_call_error(tool_name, str(exc), (time.monotonic() - start) * 1000)
         exc.__context__ = None
         exc.__cause__ = None
+        raise
+    except McpError as exc:
+        if tool_name:
+            log_call_error(tool_name, str(exc), (time.monotonic() - start) * 1000)
         raise
     except Exception as exc:
         elapsed_ms = (time.monotonic() - start) * 1000
@@ -712,6 +739,104 @@ async def get_task_info(organization_id: _AhId, task_id: _AhId) -> Task:
 
 
 @mcp.tool()
+async def wait_for_task_completion(
+    organization_id: _AhId,
+    task_id: _AhId,
+    timeout: Annotated[
+        float | None,
+        Field(
+            gt=0,
+            description=(
+                "Maximum number of seconds to wait before stopping polling. "
+                "For an agent with no MCP task protocol support, this should be set to a value "
+                "slightly below the tool call timeout."
+            ),
+        ),
+    ] = None,
+    context: Context[Any, Any, Any] | None = None,
+) -> WaitForTaskCompletionResult | mcp_types.CreateTaskResult:
+    """Poll an AuditHub task until it has no pending steps left or a timeout is reached, then
+    return its current task info.
+
+    This tool can be called repeatedly until the task is complete."""
+
+    async def _wait_for_audithub_task_completion() -> WaitForTaskCompletionResult:
+        _assert_org_allowed(organization_id)
+        deadline = None if timeout is None else time.monotonic() + timeout
+        latest_task: Task | None = None
+        while True:
+            # Stop immediately once the deadline has passed and return the latest snapshot.
+            now = time.monotonic()
+            if deadline is not None and now >= deadline:
+                if latest_task is None:
+                    task = await _with_api_client(
+                        lambda client: TasksApi(
+                            client
+                        ).get_info_organizations_organization_id_tasks_task_id_get(  # noqa: E501
+                            organization_id=organization_id,
+                            task_id=task_id,
+                        )
+                    )
+                    latest_task = _sanitize_task(Task.model_validate(task))
+                return WaitForTaskCompletionResult(task=latest_task, is_completed=False)
+
+            # Fetch the current task state before deciding whether to keep polling.
+            task = await _with_api_client(
+                lambda client: TasksApi(
+                    client
+                ).get_info_organizations_organization_id_tasks_task_id_get(  # noqa: E501
+                    organization_id=organization_id,
+                    task_id=task_id,
+                )
+            )
+            now = time.monotonic()
+            validated_task = _sanitize_task(Task.model_validate(task))
+            latest_task = validated_task
+
+            # The task is finished, so return the final snapshot immediately.
+            if not _task_has_pending_steps(validated_task):
+                return WaitForTaskCompletionResult(task=validated_task, is_completed=True)
+
+            # No timeout means a plain polling loop with the configured interval.
+            if deadline is None:
+                await asyncio.sleep(_TASK_COMPLETION_POLL_INTERVAL_SECONDS)
+                continue
+
+            # Sleep only for the remaining time so short timeouts stay precise.
+            remaining = deadline - now
+            if remaining <= 0:
+                return WaitForTaskCompletionResult(task=validated_task, is_completed=False)
+            await asyncio.sleep(min(_TASK_COMPLETION_POLL_INTERVAL_SECONDS, remaining))
+
+    if context is not None and context.request_context.experimental.is_task and timeout is None:
+        # Task-capable clients can run the indefinite wait as a background task.
+        async def _run_as_task() -> mcp_types.CreateTaskResult:
+            async def _work(task: object) -> mcp_types.CallToolResult:
+                result = await _wait_for_audithub_task_completion()
+                return mcp_types.CallToolResult(content=[], structuredContent=result.model_dump())
+
+            # `experimental.run_task` is typed as `Any` by the MCP library, so cast the
+            # awaited value back to the concrete result type this branch returns.
+            return cast(
+                mcp_types.CreateTaskResult,
+                await context.request_context.experimental.run_task(_work),
+            )
+
+        # Non-task clients fall through to the normal tool return path.
+        return await _run_tool(
+            _run_as_task,
+            tool_name=_WAIT_FOR_TASK_COMPLETION_TOOL_NAME,
+            safe_args={"organization_id": organization_id, "task_id": task_id, "timeout": timeout},
+        )
+
+    return await _run_tool(
+        _wait_for_audithub_task_completion,
+        tool_name=_WAIT_FOR_TASK_COMPLETION_TOOL_NAME,
+        safe_args={"organization_id": organization_id, "task_id": task_id, "timeout": timeout},
+    )
+
+
+@mcp.tool()
 async def get_task_artifacts(organization_id: _AhId, task_id: _AhId) -> list[TaskArtifact]:
     """List metadata of all artifacts produced by an AuditHub task."""
 
@@ -914,7 +1039,10 @@ async def get_task_findings(
             )
             + "\n",
         )
-        return FindingsParseResult(num_findings=len(validated_findings))
+        return FindingsParseResult(
+            num_findings=len(validated_findings),
+            num_findings_by_log_file_path={},
+        )
 
     return await _run_tool(
         _run,
@@ -1470,6 +1598,28 @@ _VERSION_CREATION_TOOLS = (
     RegisteredTool(_CREATE_VERSION_FROM_FILE_TOOL_NAME, create_version_from_file),
     RegisteredTool(_CREATE_VERSION_FROM_URL_TOOL_NAME, create_version_from_url),
 )
+
+
+def _mark_wait_for_task_completion_as_task_required() -> None:
+    """Advertise ``wait_for_task_completion`` as task-required in tool listings."""
+    original_handler = mcp._mcp_server.request_handlers[mcp_types.ListToolsRequest]
+
+    async def _handler(request: mcp_types.ListToolsRequest) -> mcp_types.ServerResult:
+        result = await original_handler(request)
+        list_tools_result = result.root
+        if isinstance(list_tools_result, mcp_types.ListToolsResult):
+            for tool in list_tools_result.tools:
+                if tool.name != _WAIT_FOR_TASK_COMPLETION_TOOL_NAME:
+                    continue
+                tool.execution = mcp_types.ToolExecution(taskSupport=mcp_types.TASK_OPTIONAL)
+                mcp._mcp_server._tool_cache[tool.name] = tool
+                break
+        return result
+
+    mcp._mcp_server.request_handlers[mcp_types.ListToolsRequest] = _handler
+
+
+_mark_wait_for_task_completion_as_task_required()
 
 
 def main() -> None:

@@ -122,6 +122,23 @@ class TaskLogsWriteResult(BaseModel):
     num_logs: Annotated[int, Field(ge=0)]
 
 
+class WaitForTaskCompletionResult(BaseModel):
+    """Result returned after waiting for a task to complete or timing out."""
+
+    model_config = ConfigDict(frozen=True)
+
+    task: Annotated[Task, Field(description="Latest task snapshot observed by the waiter.")]
+    is_completed: Annotated[
+        bool,
+        Field(
+            description=(
+                "True when the task finished before polling stopped. False when polling stopped "
+                "because the timeout was reached while the task still had pending steps."
+            ),
+        ),
+    ]
+
+
 DefiVanguardV2DetectorSelectionInput = tuple[
     Literal["builtin", "stdlib", "orglib", "version"],
     str | int,

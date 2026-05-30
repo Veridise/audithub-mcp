@@ -7,6 +7,7 @@ import os
 import sys
 import textwrap
 import unittest
+from datetime import UTC, datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
@@ -15,6 +16,7 @@ from unittest.mock import AsyncMock, patch
 from audithub_sdk.models.custom_detector_from_standard_library import (  # noqa: E402
     CustomDetectorFromStandardLibrary,
 )
+from mcp import types as mcp_types
 from pydantic import ValidationError
 
 import ah_mcp.server as server  # noqa: E402
@@ -42,6 +44,7 @@ from ah_mcp.models import (  # noqa: E402
     VersionFromFileInput,
     VersionFromUrlInput,
     VersionNameIndexEntry,
+    WaitForTaskCompletionResult,
 )
 from tests.sdk_stubs import make_public_configuration, make_vanguard_detector
 
@@ -130,6 +133,48 @@ _ARTIFACT_DICT = {
 _TASK_WITH_ARTIFACTS_DICT = {
     **_TASK_DICT,
     "artifacts": [_ARTIFACT_DICT],
+}
+_TASK_PENDING_DICT = {
+    **_TASK_WITH_ARTIFACTS_DICT,
+    "status": "Running",
+    "steps": [
+        {
+            "code": "analysis",
+            "definition": {
+                "caption": "Analysis",
+                "short_name": "analysis",
+                "is_tool": True,
+            },
+            "status": "Pending",
+            "started_at": None,
+            "finished_at": None,
+            "exit_code": None,
+            "error_message": None,
+            "completed_without_timeout": None,
+            "findings_counters": None,
+        }
+    ],
+}
+_TASK_COMPLETED_DICT = {
+    **_TASK_WITH_ARTIFACTS_DICT,
+    "status": "Finished",
+    "steps": [
+        {
+            "code": "analysis",
+            "definition": {
+                "caption": "Analysis",
+                "short_name": "analysis",
+                "is_tool": True,
+            },
+            "status": "Finished",
+            "started_at": None,
+            "finished_at": None,
+            "exit_code": 0,
+            "error_message": None,
+            "completed_without_timeout": True,
+            "findings_counters": None,
+        }
+    ],
 }
 _TASK_CREATION_DICT = {
     "task_id": 123,
@@ -528,10 +573,12 @@ class TestReadOnlyToolSurface(unittest.TestCase):
         self.assertNotIn("create_version_from_url", names)
         for name in names:
             self.assertTrue(
-                name.startswith("get_") or name == "parse_findings_from_task_log",
+                name.startswith("get_")
+                or name in {"parse_findings_from_task_log", "wait_for_task_completion"},
                 msg=f"unexpected default tool name: {name}",
             )
         self.assertIn("parse_findings_from_task_log", names)
+        self.assertIn("wait_for_task_completion", names)
 
     def test_run_orca_task_registers_only_when_enabled(self) -> None:
         server._set_task_runs_enabled(True)
@@ -682,6 +729,93 @@ class TestToolCalls(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(result.artifacts)
         assert result.artifacts is not None
         self.assertIsNone(result.artifacts[0].presigned_url)
+
+    async def test_wait_for_task_completion_polls_until_no_pending_steps(self) -> None:
+        get_info_mock = AsyncMock(side_effect=[_TASK_PENDING_DICT, _TASK_COMPLETED_DICT])
+        sleep_mock = AsyncMock()
+        with (
+            patch.object(
+                server.TasksApi,
+                "get_info_organizations_organization_id_tasks_task_id_get",
+                get_info_mock,
+            ),
+            patch.object(server.asyncio, "sleep", sleep_mock),
+        ):
+            result = await server.wait_for_task_completion(organization_id=1, task_id=99)
+        self.assertIsInstance(result, WaitForTaskCompletionResult)
+        self.assertTrue(result.is_completed)
+        self.assertIsNotNone(result.task.artifacts)
+        assert result.task.artifacts is not None
+        self.assertIsNone(result.task.artifacts[0].presigned_url)
+        self.assertEqual(get_info_mock.await_count, 2)
+        sleep_mock.assert_awaited_once()
+
+    async def test_wait_for_task_completion_uses_task_mode_without_timeout(self) -> None:
+        task = mcp_types.Task(
+            taskId="task-99",
+            status="working",
+            createdAt=datetime(2026, 3, 26, 12, 0, tzinfo=UTC),
+            lastUpdatedAt=datetime(2026, 3, 26, 12, 0, tzinfo=UTC),
+            ttl=None,
+            pollInterval=None,
+        )
+        create_task_result = mcp_types.CreateTaskResult(
+            task=task,
+        )
+        run_task_mock = AsyncMock(return_value=create_task_result)
+        context = server.Context(
+            request_context=SimpleNamespace(
+                experimental=SimpleNamespace(is_task=True, run_task=run_task_mock)
+            )
+        )
+        result = await server.wait_for_task_completion(
+            organization_id=1,
+            task_id=99,
+            context=context,
+        )
+        self.assertIsInstance(result, mcp_types.CreateTaskResult)
+        self.assertEqual(result.task.taskId, "task-99")
+        run_task_mock.assert_awaited_once()
+
+    async def test_wait_for_task_completion_stops_at_timeout(self) -> None:
+        get_info_mock = AsyncMock(return_value=_TASK_PENDING_DICT)
+        sleep_mock = AsyncMock()
+        with (
+            patch.object(
+                server.TasksApi,
+                "get_info_organizations_organization_id_tasks_task_id_get",
+                get_info_mock,
+            ),
+            patch.object(server.asyncio, "sleep", sleep_mock),
+            patch.object(server.time, "monotonic", side_effect=[0.0, 0.0, 0.01, 0.02, 0.06, 0.07]),
+        ):
+            result = await server.wait_for_task_completion(
+                organization_id=1,
+                task_id=99,
+                timeout=0.06,
+            )
+        self.assertIsInstance(result, WaitForTaskCompletionResult)
+        self.assertFalse(result.is_completed)
+        self.assertEqual(result.task.id, _TASK_PENDING_DICT["id"])
+        self.assertEqual(get_info_mock.await_count, 1)
+        sleep_mock.assert_awaited_once()
+        assert sleep_mock.await_args is not None
+        self.assertAlmostEqual(sleep_mock.await_args.args[0], 0.04)
+
+    async def test_wait_for_task_completion_is_listed_as_task_optional(self) -> None:
+        request = mcp_types.ListToolsRequest.model_construct(method="tools/list", params=None)
+        result = await server.mcp._mcp_server.request_handlers[mcp_types.ListToolsRequest](request)
+        list_tools_result = result.root
+        assert isinstance(list_tools_result, mcp_types.ListToolsResult)
+        tool = next(
+            tool for tool in list_tools_result.tools if tool.name == "wait_for_task_completion"
+        )
+        self.assertIsNotNone(tool.execution)
+        assert tool.execution is not None
+        self.assertEqual(tool.execution.taskSupport, mcp_types.TASK_OPTIONAL)
+        timeout_property = tool.inputSchema["properties"]["timeout"]
+        self.assertIn("Maximum number of seconds to wait", timeout_property["description"])
+        self.assertNotIn("timeout", tool.inputSchema.get("required", []))
 
     async def test_get_task_artifacts_returns_sanitized_metadata(self) -> None:
         with patch.object(

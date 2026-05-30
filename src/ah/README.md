@@ -125,6 +125,7 @@ credentials and allowlist IDs; no secrets belong in the agent config file.
 | `get_task_artifact` | Fetch a task artifact by ID as base64-encoded content |
 | `get_task_logs` | Get logs for one or more steps of a task and write each result to a local output file |
 | `get_task_findings` | Fetch findings for a task and write them to a local output file |
+| `wait_for_task_completion` | Poll a task until no pending steps remain or the timeout is reached, then return the latest task snapshot and completion state; with no timeout, task-capable clients can invoke it as a task |
 | `parse_findings_from_task_log` | Parse one or more task log files into JSON containing findings plus counts written to a local absolute output path |
 | `get_version_comments` | Get comments for a specific project version |
 | `get_version_comment_threads` | Get comment threads for a specific project version |
@@ -147,6 +148,7 @@ ID-based tools.
 ## Security model
 
 - **Read-only by default.** Default tools are named `get_*` and only invoke generated `audithub-sdk` GET endpoints.
+- **Task completion polling.** `wait_for_task_completion` repeatedly fetches task details until no pending steps remain or the timeout is reached, then returns the latest sanitized `Task` snapshot with a boolean completion flag. When called with no timeout by a task-capable client, it can run as a task instead of blocking the request.
 - **Opt-in OrCa task execution.** The `run_orca_task` mutation tool is registered only when `AH_ENABLE_TASK_RUNS=1` or `--enable-task-runs` is supplied. It calls the generated OrCa POST endpoint through `audithub-sdk`.
 - **Opt-in DeFi Vanguard task execution.** The `run_defi_vanguard_task` mutation tool is registered under the same task-run opt-in gate. Its inputs are flattened at the top level: `organization_id`, `project_id`, `version_id`, detector selections, and the runtime options. Pass detector selections as two-item JSON arrays `[type, id]`, where builtin selectors use a built-in detector code from `get_defi_vanguard_detectors`, and custom selectors use the catalog id shown by the same tool. The server resolves those selections through the backend detector catalog before calling the generated DeFi Vanguard v2 POST endpoint.
 - **On-chain OrCa mode.** When launching OrCa against already deployed contracts, pass `deployment_info_file` as a path ending in `.deployment.json`. The server normalizes that into `on_chain=True` and rejects mismatched paths early so callers do not accidentally launch a local Foundry-style run.
