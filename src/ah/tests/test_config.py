@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+from pydantic import SecretStr
 
 import ah_mcp.config as config
 
@@ -93,7 +94,7 @@ def test_update_config_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
         audithub_base_url="https://before.example/api/v1",
         audithub_oidc_configuration_url="https://before/.well-known/openid-configuration",
         audithub_oidc_client_id="before-client-id",
-        audithub_oidc_client_secret="before-client-secret",
+        audithub_oidc_client_secret=SecretStr("before-client-secret"),
         allowed_org_ids=[1],
         allowed_project_ids=[10],
         enable_task_runs=False,

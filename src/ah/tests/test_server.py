@@ -11,6 +11,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
+from typing import Any, cast
 from unittest.mock import AsyncMock, patch
 
 from audithub_sdk.models.custom_detector_from_standard_library import (  # noqa: E402
@@ -763,9 +764,12 @@ class TestToolCalls(unittest.IsolatedAsyncioTestCase):
             task=task,
         )
         run_task_mock = AsyncMock(return_value=create_task_result)
-        context = server.Context(
-            request_context=SimpleNamespace(
-                experimental=SimpleNamespace(is_task=True, run_task=run_task_mock)
+        context: server.Context[Any, Any, Any] = server.Context(
+            request_context=cast(
+                Any,
+                SimpleNamespace(
+                    experimental=SimpleNamespace(is_task=True, run_task=run_task_mock)
+                ),
             )
         )
         result = await server.wait_for_task_completion(
