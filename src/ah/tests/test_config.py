@@ -97,8 +97,7 @@ def test_update_config_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
         audithub_oidc_client_secret=SecretStr("before-client-secret"),
         allowed_org_ids=[1],
         allowed_project_ids=[10],
-        enable_task_runs=False,
-        enable_version_creation=False,
+        capabilities=config.CapabilitiesConfig(task_runs=False),
     )
     monkeypatch.setenv("AUDITHUB_BASE_URL", "https://after.example/api/v1")
     monkeypatch.setenv(
@@ -123,8 +122,8 @@ def test_update_config_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
     assert input_config.audithub_oidc_client_secret.get_secret_value() == "after-client-secret"
     assert set(input_config.allowed_org_ids) == {2, 3}
     assert set(input_config.allowed_project_ids) == {20, 30}
-    assert input_config.enable_task_runs is True
-    assert input_config.enable_version_creation is True
+    assert input_config.capabilities.task_runs is True
+    assert input_config.capabilities.version_creation is True
 
 
 def test_ah_mcp_rejects_invalid_config() -> None:

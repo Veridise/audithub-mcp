@@ -44,6 +44,13 @@ class AuditHubServerConfig:
     version_creation_enabled: bool
 
 
+class CapabilitiesConfig(BaseModel):
+    """Opt-in capability toggles loaded from file-backed or env-backed sources."""
+
+    task_runs: bool = False
+    version_creation: bool = False
+
+
 class AuditHubInputConfig(BaseModel):
     """Validated input config data loaded from file-backed or env-backed sources."""
 
@@ -53,8 +60,7 @@ class AuditHubInputConfig(BaseModel):
     audithub_oidc_client_secret: SecretStr
     allowed_org_ids: list[_AhId]
     allowed_project_ids: list[_AhId]
-    enable_task_runs: bool = False
-    enable_version_creation: bool = False
+    capabilities: CapabilitiesConfig = Field(default_factory=CapabilitiesConfig)
 
     @field_validator("audithub_oidc_client_secret")
     @classmethod
@@ -92,11 +98,11 @@ def update_input_config_from_env(config: AuditHubInputConfig) -> None:
             )
         )
     if "AH_ENABLE_TASK_RUNS" in os.environ:
-        config.enable_task_runs = _parse_bool_flag(
+        config.capabilities.task_runs = _parse_bool_flag(
             os.environ.get("AH_ENABLE_TASK_RUNS"), "AH_ENABLE_TASK_RUNS"
         )
     if "AH_ENABLE_VERSION_CREATION" in os.environ:
-        config.enable_version_creation = _parse_bool_flag(
+        config.capabilities.version_creation = _parse_bool_flag(
             os.environ.get("AH_ENABLE_VERSION_CREATION"), "AH_ENABLE_VERSION_CREATION"
         )
 
@@ -174,10 +180,11 @@ def load_config_from_path(
             audithub_oidc_client_secret=SecretStr(""),
             allowed_org_ids=None,
             allowed_project_ids=None,
-            enable_task_runs=False,
-            enable_version_creation=False,
+            capabilities=CapabilitiesConfig(),
         )
-        input_config.__dict__.update(raw_config)
+        input_config = AuditHubInputConfig.model_validate(
+            {**input_config.model_dump(mode="python", warnings=False), **raw_config}
+        )
         if override_from_env_vars:
             update_input_config_from_env(input_config)
         input_config = AuditHubInputConfig.model_validate(
@@ -189,8 +196,8 @@ def load_config_from_path(
         context=_build_context(input_config),
         allowed_org_ids=frozenset(input_config.allowed_org_ids),
         allowed_project_ids=frozenset(input_config.allowed_project_ids),
-        task_runs_enabled=input_config.enable_task_runs,
-        version_creation_enabled=input_config.enable_version_creation,
+        task_runs_enabled=input_config.capabilities.task_runs,
+        version_creation_enabled=input_config.capabilities.version_creation,
     )
 
 
@@ -203,8 +210,7 @@ def load_config_from_env() -> AuditHubServerConfig:
         audithub_oidc_client_secret=SecretStr(""),
         allowed_org_ids=[],
         allowed_project_ids=[],
-        enable_task_runs=False,
-        enable_version_creation=False,
+        capabilities=CapabilitiesConfig(),
     )
     update_input_config_from_env(input_config)
     input_config = AuditHubInputConfig.model_validate(input_config.model_dump())
@@ -212,8 +218,8 @@ def load_config_from_env() -> AuditHubServerConfig:
         context=_build_context(input_config),
         allowed_org_ids=frozenset(input_config.allowed_org_ids),
         allowed_project_ids=frozenset(input_config.allowed_project_ids),
-        task_runs_enabled=input_config.enable_task_runs,
-        version_creation_enabled=input_config.enable_version_creation,
+        task_runs_enabled=input_config.capabilities.task_runs,
+        version_creation_enabled=input_config.capabilities.version_creation,
     )
 
 

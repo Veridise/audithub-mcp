@@ -64,8 +64,8 @@ All credentials are read from environment variables and passed into the SDK auth
 | `AUDITHUB_OIDC_CLIENT_SECRET` | Yes | OIDC client secret -- keep out of logs and shell history |
 | `AH_ALLOWED_ORG_IDS` | Yes | Comma-separated list of numeric organization IDs the server may access, e.g. `"1,2,3"` |
 | `AH_ALLOWED_PROJECT_IDS` | Yes | Comma-separated list of numeric project IDs the server may access, e.g. `"10,20"` |
-| `AH_ENABLE_TASK_RUNS` | No | Set to `1` to register the opt-in tools for AuditHub tasks |
-| `AH_ENABLE_VERSION_CREATION` | No | Set to `1` to register the opt-in `create_version_from_url` mutation tool |
+| `AH_ENABLE_TASK_RUNS` | No | Set to `1` to register the opt-in tools for AuditHub tasks; in config files, set `capabilities.task_runs: true` |
+| `AH_ENABLE_VERSION_CREATION` | No | Set to `1` to register the opt-in `create_version_from_url` mutation tool; in config files, set `capabilities.version_creation: true` |
 
 CLI flags `--allowed-org-ids` and `--allowed-project-ids` override the corresponding environment variables when both are supplied. Use `--enable-task-runs` to register the task tools without setting `AH_ENABLE_TASK_RUNS`, or `--enable-version-creation` to register `create_version_from_url` without setting `AH_ENABLE_VERSION_CREATION`.
 

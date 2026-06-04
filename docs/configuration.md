@@ -67,13 +67,15 @@ and projects that the MCP server provides access to.
 
 ### Optional
 
-- `enable_task_runs` (boolean)
-  - Set to `true` to enable tools for executing AuditHub tasks. Default: `false`.
-  - Environment variable: `AH_ENABLE_TASK_RUNS`
-    - Environment format: truthy or falsy string values. Accepted truthy values are `1`,
-      `true`, `yes`, and `on`. Accepted falsy values are `0`, `false`, `no`, and `off`.
-- `enable_version_creation` (boolean)
-  - Set to `true` to enable tools for uploading source code to AuditHub. Default: `false`.
-  - Environment variable: `AH_ENABLE_VERSION_CREATION`
-    - Environment format: truthy or falsy string values. Accepted truthy values are `1`,
-      `true`, `yes`, and `on`. Accepted falsy values are `0`, `false`, `no`, and `off`.
+- `capabilities` (object)
+  - Optional feature toggles for state-changing features.
+  - `task_runs` (boolean)
+    - Set to `true` to enable tools for executing AuditHub tasks. Default: `false`.
+    - Environment variable: `AH_ENABLE_TASK_RUNS`
+      - Environment format: truthy or falsy string values. Accepted truthy values are `1`,
+        `true`, `yes`, and `on`. Accepted falsy values are `0`, `false`, `no`, and `off`.
+  - `version_creation` (boolean)
+    - Set to `true` to enable tools for uploading source code to AuditHub. Default: `false`.
+    - Environment variable: `AH_ENABLE_VERSION_CREATION`
+      - Environment format: truthy or falsy string values. Accepted truthy values are `1`,
+        `true`, `yes`, and `on`. Accepted falsy values are `0`, `false`, `no`, and `off`.

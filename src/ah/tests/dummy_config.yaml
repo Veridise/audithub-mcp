@@ -8,5 +8,6 @@ allowed_org_ids:
 allowed_project_ids:
   - 10
   - 20
-enable_task_runs: true
-enable_version_creation: false
+capabilities:
+  task_runs: true
+  version_creation: false
