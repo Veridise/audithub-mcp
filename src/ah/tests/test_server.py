@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import sys
@@ -24,6 +25,8 @@ import ah_mcp.server as server  # noqa: E402
 import ah_mcp.vanguard as vanguard  # noqa: E402
 from ah_mcp.models import (  # noqa: E402
     Comment,
+    CustomDetectorUploadInput,
+    CustomDetectorUploadResult,
     DefiVanguardV2TaskInput,
     IssueDetails,
     IssueForList,
@@ -257,6 +260,8 @@ def setUpModule() -> None:
     server._allowed_project_ids = frozenset()
     vanguard.reset_builtin_vanguard_v2_detectors_cache()
     server._set_task_runs_enabled(False)
+    server._set_version_creation_enabled(False)
+    server._set_edit_custom_detectors_enabled(False)
 
 
 def tearDownModule() -> None:
@@ -265,6 +270,8 @@ def tearDownModule() -> None:
     server._allowed_project_ids = frozenset()
     vanguard.reset_builtin_vanguard_v2_detectors_cache()
     server._set_task_runs_enabled(False)
+    server._set_version_creation_enabled(False)
+    server._set_edit_custom_detectors_enabled(False)
 
 
 def _orca_task_input() -> OrCaTaskInput:
@@ -337,6 +344,11 @@ class TestBuildContext(unittest.TestCase):
             )
         self.assertIn(".deployment.json", str(cm.exception))
 
+    def test_custom_detector_upload_requires_filename_without_update(self) -> None:
+        with self.assertRaises(ValidationError) as cm:
+            CustomDetectorUploadInput(file_path="/tmp/detector.luau")
+        self.assertIn("filename is required", str(cm.exception))
+
     def test_secret_not_in_error_message(self) -> None:
         env = {"AUDITHUB_OIDC_CLIENT_SECRET": "SUPER_SECRET_VALUE"}
         with patch.dict(os.environ, env, clear=True), self.assertRaises(RuntimeError) as cm:
@@ -364,10 +376,12 @@ class TestCtxCache(unittest.TestCase):
         self.assertEqual(server._allowed_project_ids, frozenset({10, 20}))
         self.assertFalse(server._task_runs_enabled)
         self.assertFalse(server._version_creation_enabled)
+        self.assertFalse(server._edit_custom_detectors_enabled)
         self.assertFalse(server._is_tool_registered("run_orca_task"))
         self.assertFalse(server._is_tool_registered("run_defi_vanguard_task"))
         self.assertFalse(server._is_tool_registered("create_version_from_file"))
         self.assertFalse(server._is_tool_registered("create_version_from_url"))
+        self.assertFalse(server._is_tool_registered("upload_custom_detector"))
 
     def test_main_enables_task_runs_from_env(self) -> None:
         allow_env = {
@@ -402,6 +416,47 @@ class TestCtxCache(unittest.TestCase):
             self.assertTrue(server._is_tool_registered("create_version_from_url"))
         finally:
             server._set_version_creation_enabled(False)
+
+    def test_main_enables_custom_detector_upload_from_config_file(self) -> None:
+        config_text = textwrap.dedent(
+            """
+            audithub_base_url: https://example.com/api/v1
+            audithub_oidc_configuration_url: https://issuer/.well-known/openid-configuration
+            audithub_oidc_client_id: test-client-id
+            audithub_oidc_client_secret: test-client-secret
+            allowed_org_ids:
+              - 1
+            allowed_project_ids:
+              - 10
+            capabilities:
+              task_runs: false
+              version_creation: false
+              edit_custom_detectors: true
+            """
+        ).strip()
+        with TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "config.yaml"
+            config_path.write_text(config_text, encoding="utf-8")
+            server._context = None
+            argv = ["ah-mcp", "--config", str(config_path)]
+            try:
+                with (
+                    patch.dict(os.environ, {}, clear=True),
+                    patch.object(sys, "argv", argv),
+                    patch.object(server.mcp, "run"),
+                ):
+                    server.main()
+                self.assertTrue(server._edit_custom_detectors_enabled)
+                self.assertTrue(server._is_tool_registered("upload_custom_detector"))
+                self.assertFalse(server._task_runs_enabled)
+                self.assertFalse(server._version_creation_enabled)
+            finally:
+                server._context = None
+                server._allowed_org_ids = frozenset()
+                server._allowed_project_ids = frozenset()
+                server._set_task_runs_enabled(False)
+                server._set_version_creation_enabled(False)
+                server._set_edit_custom_detectors_enabled(False)
 
     def test_main_enables_task_runs_from_cli_flag(self) -> None:
         allow_env = {
@@ -494,11 +549,13 @@ class TestCtxCache(unittest.TestCase):
             self.assertIn('"name": "run_defi_vanguard_task"', rendered)
             self.assertIn('"name": "create_version_from_file"', rendered)
             self.assertIn('"name": "create_version_from_url"', rendered)
+            self.assertIn('"name": "upload_custom_detector"', rendered)
             self.assertIn('"name": "parse_findings_from_task_log"', rendered)
             self.assertIsNone(server._context)
         finally:
             server._set_task_runs_enabled(False)
             server._set_version_creation_enabled(False)
+            server._set_edit_custom_detectors_enabled(False)
 
     def test_main_can_disable_env_overrides_for_config_file(self) -> None:
         config_path = Path(__file__).with_name("dummy_config.yaml")
@@ -525,12 +582,14 @@ class TestCtxCache(unittest.TestCase):
             self.assertEqual(server._allowed_project_ids, frozenset({10, 20}))
             self.assertTrue(server._task_runs_enabled)
             self.assertFalse(server._version_creation_enabled)
+            self.assertFalse(server._edit_custom_detectors_enabled)
         finally:
             server._context = None
             server._allowed_org_ids = frozenset()
             server._allowed_project_ids = frozenset()
             server._set_task_runs_enabled(False)
             server._set_version_creation_enabled(False)
+            server._set_edit_custom_detectors_enabled(False)
 
 
 class TestRunTool(unittest.IsolatedAsyncioTestCase):
@@ -563,6 +622,27 @@ class TestReadOnlyToolSurface(unittest.TestCase):
         server._set_task_runs_enabled(False)
         server._set_version_creation_enabled(False)
 
+    def test_vanguard_custom_detector_docs_resource_is_registered(self) -> None:
+        resources = list(asyncio.run(server.mcp.list_resources()))
+        resource = next(
+            item
+            for item in resources
+            if str(item.uri) == server._VANGUARD_CUSTOM_DETECTOR_DOCS_RESOURCE_URI
+        )
+        self.assertEqual(resource.name, "vanguard_custom_detector_docs")
+        self.assertEqual(resource.title, "Vanguard custom detector docs")
+        self.assertEqual(resource.mimeType, "application/json")
+
+    def test_vanguard_custom_detector_docs_resource_returns_urls(self) -> None:
+        contents = list(
+            asyncio.run(
+                server.mcp.read_resource(server._VANGUARD_CUSTOM_DETECTOR_DOCS_RESOURCE_URI)
+            )
+        )
+        self.assertEqual(len(contents), 1)
+        self.assertEqual(contents[0].mime_type, "application/json")
+        self.assertEqual(json.loads(contents[0].content), server._VANGUARD_CUSTOM_DETECTOR_DOCS)
+
     def test_default_tools_start_with_get(self) -> None:
         server._set_task_runs_enabled(False)
         server._set_version_creation_enabled(False)
@@ -572,6 +652,7 @@ class TestReadOnlyToolSurface(unittest.TestCase):
         self.assertNotIn("run_defi_vanguard_task", names)
         self.assertNotIn("create_version_from_file", names)
         self.assertNotIn("create_version_from_url", names)
+        self.assertNotIn("upload_custom_detector", names)
         for name in names:
             self.assertTrue(
                 name.startswith("get_")
@@ -597,6 +678,11 @@ class TestReadOnlyToolSurface(unittest.TestCase):
         names = list(server.mcp._tool_manager._tools.keys())
         self.assertIn("create_version_from_url", names)
 
+    def test_upload_custom_detector_registers_only_when_enabled(self) -> None:
+        server._set_edit_custom_detectors_enabled(True)
+        names = list(server.mcp._tool_manager._tools.keys())
+        self.assertIn("upload_custom_detector", names)
+
 
 class TestToolCalls(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
@@ -605,6 +691,7 @@ class TestToolCalls(unittest.IsolatedAsyncioTestCase):
         vanguard.reset_builtin_vanguard_v2_detectors_cache()
         server._set_task_runs_enabled(False)
         server._set_version_creation_enabled(False)
+        server._set_edit_custom_detectors_enabled(False)
         with patch.dict(os.environ, _FULL_ENV, clear=True):
             server._context = server._build_context()
 
@@ -615,6 +702,7 @@ class TestToolCalls(unittest.IsolatedAsyncioTestCase):
         vanguard.reset_builtin_vanguard_v2_detectors_cache()
         server._set_task_runs_enabled(False)
         server._set_version_creation_enabled(False)
+        server._set_edit_custom_detectors_enabled(False)
 
     async def test_get_my_organizations_filters_allowlist(self) -> None:
         with patch.object(
@@ -767,9 +855,7 @@ class TestToolCalls(unittest.IsolatedAsyncioTestCase):
         context: server.Context[Any, Any, Any] = server.Context(
             request_context=cast(
                 Any,
-                SimpleNamespace(
-                    experimental=SimpleNamespace(is_task=True, run_task=run_task_mock)
-                ),
+                SimpleNamespace(experimental=SimpleNamespace(is_task=True, run_task=run_task_mock)),
             )
         )
         result = await server.wait_for_task_completion(
@@ -1507,6 +1593,136 @@ class TestToolCalls(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(kwargs["is_deployed"])
         self.assertEqual(kwargs["revision"], "main")
         self.assertTrue(kwargs["includes_submodules"])
+
+    async def test_upload_custom_detector_creates_detector(self) -> None:
+        server._set_edit_custom_detectors_enabled(True)
+        with TemporaryDirectory() as tmpdir:
+            detector_path = Path(tmpdir) / "detector.luau"
+            detector_path.write_text("rule body\n", encoding="utf-8")
+            mock = AsyncMock(return_value=SimpleNamespace(id=77, message="Detector created"))
+            with patch.object(
+                server.CustomDetectorsOrgLibApi,
+                "post_custom_detector_organizations_organization_id_custom_detectors_post",
+                mock,
+            ):
+                result = await server.upload_custom_detector(
+                    organization_id=1,
+                    file_path=str(detector_path),
+                    filename="detector.luau",
+                )
+        self.assertIsInstance(result, CustomDetectorUploadResult)
+        self.assertEqual(result.id, 77)
+        self.assertEqual(result.filename, "detector.luau")
+        self.assertEqual(result.message, "Detector created")
+        call_args = mock.await_args
+        assert call_args is not None
+        kwargs = call_args.kwargs
+        self.assertEqual(kwargs["organization_id"], 1)
+        custom_detector = kwargs["custom_detector"]
+        self.assertEqual(custom_detector.filename, "detector.luau")
+        self.assertEqual(custom_detector.contents, "rule body\n")
+        self.assertEqual(custom_detector.encoding, "plain")
+
+    async def test_upload_custom_detector_updates_detector_using_existing_filename(self) -> None:
+        server._set_edit_custom_detectors_enabled(True)
+        with TemporaryDirectory() as tmpdir:
+            detector_path = Path(tmpdir) / "detector.luau"
+            detector_path.write_text("updated body\n", encoding="utf-8")
+            get_mock = AsyncMock(return_value=SimpleNamespace(id=88, filename="existing.luau"))
+            put_mock = AsyncMock(
+                return_value=SimpleNamespace(success=True, message="Detector updated")
+            )
+            with (
+                patch.object(
+                    server.CustomDetectorsOrgLibApi,
+                    "get_custom_detector_organizations_organization_id_custom_detectors_custom_detector_id_get",
+                    get_mock,
+                ),
+                patch.object(
+                    server.CustomDetectorsOrgLibApi,
+                    "put_custom_detector_organizations_organization_id_custom_detectors_custom_detector_id_put",
+                    put_mock,
+                ),
+            ):
+                result = await server.upload_custom_detector(
+                    organization_id=1,
+                    file_path=str(detector_path),
+                    update=88,
+                )
+        self.assertIsInstance(result, CustomDetectorUploadResult)
+        self.assertEqual(result.id, 88)
+        self.assertEqual(result.filename, "existing.luau")
+        self.assertEqual(result.message, "Detector updated")
+        self.assertIsNotNone(get_mock.await_args)
+        get_call = get_mock.await_args
+        assert get_call is not None
+        get_kwargs = get_call.kwargs
+        self.assertEqual(get_kwargs["organization_id"], 1)
+        self.assertEqual(get_kwargs["custom_detector_id"], 88)
+        self.assertIsNotNone(put_mock.await_args)
+        put_call = put_mock.await_args
+        assert put_call is not None
+        put_kwargs = put_call.kwargs
+        self.assertEqual(put_kwargs["organization_id"], 1)
+        self.assertEqual(put_kwargs["custom_detector_id"], 88)
+        custom_detector = put_kwargs["custom_detector"]
+        self.assertEqual(custom_detector.filename, "existing.luau")
+        self.assertEqual(custom_detector.contents, "updated body\n")
+
+    async def test_upload_custom_detector_updates_detector_with_explicit_filename(self) -> None:
+        server._set_edit_custom_detectors_enabled(True)
+        with TemporaryDirectory() as tmpdir:
+            detector_path = Path(tmpdir) / "detector.luau"
+            detector_path.write_text("updated body\n", encoding="utf-8")
+            get_mock = AsyncMock()
+            put_mock = AsyncMock(
+                return_value=SimpleNamespace(success=True, message="Detector updated")
+            )
+            with (
+                patch.object(
+                    server.CustomDetectorsOrgLibApi,
+                    "get_custom_detector_organizations_organization_id_custom_detectors_custom_detector_id_get",
+                    get_mock,
+                ),
+                patch.object(
+                    server.CustomDetectorsOrgLibApi,
+                    "put_custom_detector_organizations_organization_id_custom_detectors_custom_detector_id_put",
+                    put_mock,
+                ),
+            ):
+                result = await server.upload_custom_detector(
+                    organization_id=1,
+                    file_path=str(detector_path),
+                    filename="renamed.luau",
+                    update=88,
+                )
+        self.assertEqual(result.id, 88)
+        self.assertEqual(result.filename, "renamed.luau")
+        self.assertEqual(result.message, "Detector updated")
+        get_mock.assert_not_awaited()
+        self.assertIsNotNone(put_mock.await_args)
+        put_call = put_mock.await_args
+        assert put_call is not None
+        put_kwargs = put_call.kwargs
+        self.assertEqual(put_kwargs["custom_detector_id"], 88)
+        self.assertEqual(put_kwargs["organization_id"], 1)
+        custom_detector = put_kwargs["custom_detector"]
+        self.assertEqual(custom_detector.filename, "renamed.luau")
+        self.assertEqual(custom_detector.contents, "updated body\n")
+
+    async def test_upload_custom_detector_requires_filename_when_creating(self) -> None:
+        server._set_edit_custom_detectors_enabled(True)
+        with TemporaryDirectory() as tmpdir:
+            detector_path = Path(tmpdir) / "detector.luau"
+            detector_path.write_text("rule body\n", encoding="utf-8")
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "filename is required when update is not provided",
+            ):
+                await server.upload_custom_detector(
+                    organization_id=1,
+                    file_path=str(detector_path),
+                )
 
     async def test_get_version_comments_forwards_limit_offset(self) -> None:
         mock = AsyncMock(return_value=[_COMMENT_DICT])

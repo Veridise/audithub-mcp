@@ -79,3 +79,6 @@ and projects that the MCP server provides access to.
     - Environment variable: `AH_ENABLE_VERSION_CREATION`
       - Environment format: truthy or falsy string values. Accepted truthy values are `1`,
         `true`, `yes`, and `on`. Accepted falsy values are `0`, `false`, `no`, and `off`.
+  - `edit_custom_detectors` (boolean)
+    - Set to `true` to enable `upload_custom_detector` for organization-level custom
+      detectors. Default: `false`.

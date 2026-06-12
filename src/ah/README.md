@@ -69,6 +69,8 @@ All credentials are read from environment variables and passed into the SDK auth
 
 CLI flags `--allowed-org-ids` and `--allowed-project-ids` override the corresponding environment variables when both are supplied. Use `--enable-task-runs` to register the task tools without setting `AH_ENABLE_TASK_RUNS`, or `--enable-version-creation` to register `create_version_from_url` without setting `AH_ENABLE_VERSION_CREATION`.
 
+Custom detector uploads are config-file only for now: set `capabilities.edit_custom_detectors: true` to register `upload_custom_detector`.
+
 ## Running the server
 
 Copy `.env.example` to `.env`, fill in your values, then:

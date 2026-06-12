@@ -81,6 +81,32 @@ class VersionCreation(BaseModel):
     message: str
 
 
+class CustomDetectorUploadInput(BaseModel):
+    """Input payload for uploading an organization-level custom detector."""
+
+    model_config = ConfigDict(frozen=True)
+
+    file_path: Annotated[str, Field(min_length=1)]
+    filename: Annotated[str | None, Field(min_length=1)] = None
+    update: Annotated[_PositiveId | None, Field(description="Custom detector ID to update.")] = None
+
+    @model_validator(mode="after")
+    def _validate_filename_requirement(self) -> "CustomDetectorUploadInput":
+        if self.update is None and self.filename is None:
+            raise ValueError("filename is required when update is not provided")
+        return self
+
+
+class CustomDetectorUploadResult(BaseModel):
+    """Response returned after uploading or updating a custom detector."""
+
+    model_config = ConfigDict(frozen=True)
+
+    id: _PositiveId
+    filename: Annotated[str, Field(min_length=1)]
+    message: str
+
+
 class TaskArtifact(BaseModel):
     """Sanitized metadata for an artifact produced by an AuditHub task."""
 
@@ -386,6 +412,8 @@ class OrCaTaskInput(BaseModel):
 
 __all__ = [
     "Comment",
+    "CustomDetectorUploadInput",
+    "CustomDetectorUploadResult",
     "DefiVanguardV2DetectorSelectionInput",
     "DefiVanguardV2TaskInput",
     "FIOData",
@@ -416,6 +444,8 @@ __all__ = [
     "TaskLogsWriteResult",
     "Thread",
     "Version",
+    "VersionCreation",
     "VersionFromFileInput",
+    "VersionFromUrlInput",
     "VersionNameIndexEntry",
 ]

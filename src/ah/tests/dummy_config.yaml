@@ -11,3 +11,4 @@ allowed_project_ids:
 capabilities:
   task_runs: true
   version_creation: false
+  edit_custom_detectors: false

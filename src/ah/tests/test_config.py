@@ -36,6 +36,7 @@ def test_config_loads_from_yaml() -> None:
     assert config.allowed_project_ids == frozenset({10, 20})
     assert config.task_runs_enabled is True
     assert config.version_creation_enabled is False
+    assert config.edit_custom_detectors_enabled is False
 
 
 def test_config_loads_from_json() -> None:
@@ -73,6 +74,7 @@ def test_file_configuration_can_be_overridden_from_env(
     assert config.allowed_project_ids == frozenset({10, 20})
     assert config.task_runs_enabled is False
     assert config.version_creation_enabled is True
+    assert config.edit_custom_detectors_enabled is False
 
 
 def test_configuration_with_missing_keys_fails_to_load() -> None:
@@ -124,6 +126,7 @@ def test_update_config_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
     assert set(input_config.allowed_project_ids) == {20, 30}
     assert input_config.capabilities.task_runs is True
     assert input_config.capabilities.version_creation is True
+    assert input_config.capabilities.edit_custom_detectors is False
 
 
 def test_ah_mcp_rejects_invalid_config() -> None:

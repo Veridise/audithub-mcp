@@ -42,6 +42,7 @@ class AuditHubServerConfig:
     allowed_project_ids: frozenset[int]
     task_runs_enabled: bool
     version_creation_enabled: bool
+    edit_custom_detectors_enabled: bool
 
 
 class CapabilitiesConfig(BaseModel):
@@ -49,6 +50,7 @@ class CapabilitiesConfig(BaseModel):
 
     task_runs: bool = False
     version_creation: bool = False
+    edit_custom_detectors: bool = False
 
 
 class AuditHubInputConfig(BaseModel):
@@ -198,6 +200,7 @@ def load_config_from_path(
         allowed_project_ids=frozenset(input_config.allowed_project_ids),
         task_runs_enabled=input_config.capabilities.task_runs,
         version_creation_enabled=input_config.capabilities.version_creation,
+        edit_custom_detectors_enabled=input_config.capabilities.edit_custom_detectors,
     )
 
 
@@ -220,6 +223,7 @@ def load_config_from_env() -> AuditHubServerConfig:
         allowed_project_ids=frozenset(input_config.allowed_project_ids),
         task_runs_enabled=input_config.capabilities.task_runs,
         version_creation_enabled=input_config.capabilities.version_creation,
+        edit_custom_detectors_enabled=input_config.capabilities.edit_custom_detectors,
     )
 
 

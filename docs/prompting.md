@@ -44,6 +44,13 @@ Execute Vanguard task run with org 112 and project 734 on the latest version.
 Run the reentrancy detector and all ERC20 custom detectors.
 ```
 
+Example prompt that runs a custom detector:
+
+```
+Execute Vanguard task run with org 112 and project 734 on the latest version.
+Create and run a custom detector that searches for all calls to `approve(address,uint256)`.
+```
+
 ## Retrieving and Triaging Findings
 
 After running a tool task that reports findings, you can prompt the agent to

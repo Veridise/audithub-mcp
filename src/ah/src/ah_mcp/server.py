@@ -31,6 +31,7 @@ from audithub_sdk.api.tasks_api import TasksApi
 from audithub_sdk.api.tools_api import ToolsApi
 from audithub_sdk.api.users_api import UsersApi
 from audithub_sdk.api.versions_api import VersionsApi
+from audithub_sdk.models.custom_detector import CustomDetector
 from audithub_sdk.models.fuzzing_blacklist_entry import FuzzingBlacklistEntry
 from audithub_sdk.models.hint_ad_hoc import HintAdHoc
 from audithub_sdk.models.hint_from_organization_library import HintFromOrganizationLibrary
@@ -59,6 +60,7 @@ from ah_mcp import parse_fio_logs, vanguard
 from ah_mcp.audit import log_call_error, log_call_start, log_call_success
 from ah_mcp.models import (
     Comment,
+    CustomDetectorUploadResult,
     DefiVanguardV2DetectorSelectionInput,
     DefiVanguardV2TaskInput,
     FindingsParseResult,
@@ -93,6 +95,7 @@ from ah_mcp.models import (
     VersionFromUrlInput,
     VersionNameIndexEntry,
     WaitForTaskCompletionResult,
+    _PositiveId,
 )
 
 _AhId = server_config._AhId
@@ -114,12 +117,20 @@ __all__ = [
 mcp = FastMCP("ah_mcp")
 mcp._mcp_server.experimental.enable_tasks()
 
+_VANGUARD_CUSTOM_DETECTOR_DOCS_RESOURCE_URI = "docs://vanguard/custom-detectors"
+_VANGUARD_CUSTOM_DETECTOR_DOCS = {
+    "Custom Detector Definition": "https://docs.audithub.dev/vanguard/custom-detectors/",
+    "PAQL Reference": "https://docs.audithub.dev/vanguard/custom-detectors/paql",
+    "Solidity PAQL Dialect": "https://docs.audithub.dev/vanguard/custom-detectors/solidity-dialect",
+}
+
 
 _context: AuditHubSdkContext | None = None
 _allowed_org_ids: frozenset[int] = frozenset()
 _allowed_project_ids: frozenset[int] = frozenset()
 _task_runs_enabled = False
 _version_creation_enabled = False
+_edit_custom_detectors_enabled = False
 
 _org_ta = TypeAdapter(list[MyOrganization])
 _comment_ta = TypeAdapter(list[Comment])
@@ -224,6 +235,13 @@ def _set_version_creation_enabled(enabled: bool) -> None:
     _set_registered_tools_enabled(_VERSION_CREATION_TOOLS, enabled)
 
 
+def _set_edit_custom_detectors_enabled(enabled: bool) -> None:
+    """Enable or disable opt-in custom-detector upload MCP tools."""
+    global _edit_custom_detectors_enabled
+    _edit_custom_detectors_enabled = enabled
+    _set_registered_tools_enabled(_CUSTOM_DETECTOR_UPLOAD_TOOLS, enabled)
+
+
 def _assert_task_runs_enabled() -> None:
     """Raise unless mutating AuditHub task runs are enabled."""
     if not _task_runs_enabled:
@@ -240,6 +258,16 @@ def _assert_version_creation_enabled() -> None:
             "AuditHub version creation is disabled. Restart the server with "
             "--enable-version-creation or AH_ENABLE_VERSION_CREATION=1 to enable "
             "create_version_from_file and create_version_from_url."
+        )
+
+
+def _assert_edit_custom_detectors_enabled() -> None:
+    """Raise unless custom detector uploads are enabled."""
+    if not _edit_custom_detectors_enabled:
+        raise RuntimeError(
+            "AuditHub custom detector uploads are disabled. Restart the server with "
+            "capabilities.edit_custom_detectors: true in the config file to enable "
+            "upload_custom_detector."
         )
 
 
@@ -346,6 +374,7 @@ def _apply_cli_args_to_config(
         allowed_project_ids=allowed_project_ids,
         task_runs_enabled=config.task_runs_enabled or args.enable_task_runs,
         version_creation_enabled=config.version_creation_enabled or args.enable_version_creation,
+        edit_custom_detectors_enabled=config.edit_custom_detectors_enabled,
     )
 
 
@@ -353,6 +382,18 @@ async def _list_tools() -> None:
     """Print the registered MCP tools and their schemas, then exit."""
     tools = await mcp.list_tools()
     print(json.dumps([tool.model_dump(mode="json") for tool in tools], indent=2, sort_keys=True))
+
+
+@mcp.resource(
+    _VANGUARD_CUSTOM_DETECTOR_DOCS_RESOURCE_URI,
+    name="vanguard_custom_detector_docs",
+    title="Vanguard custom detector docs",
+    description="Links to AuditHub's PAQL and Solidity PAQL documentation.",
+    mime_type="application/json",
+)
+def get_vanguard_custom_detector_docs() -> dict[str, str]:
+    """Return links to the AuditHub custom-detector documentation."""
+    return _VANGUARD_CUSTOM_DETECTOR_DOCS
 
 
 def _ctx() -> AuditHubSdkContext:
@@ -1585,10 +1626,143 @@ async def _create_version_from_archive_with_client(
     return _version_creation_ta.validate_python(created_version.model_dump())
 
 
+def _read_custom_detector_contents(file_path: str) -> str:
+    """Read a custom detector file from disk as UTF-8 text."""
+    detector_path = Path(file_path)
+    try:
+        return detector_path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        raise RuntimeError(f"Failed to read custom detector file {detector_path}: {exc}") from None
+
+
+async def _get_custom_detector_with_client(
+    client: AuthenticatedApiClient,
+    *,
+    organization_id: int,
+    custom_detector_id: int,
+) -> CustomDetector:
+    """Fetch a custom detector by ID from an organization."""
+    return await CustomDetectorsOrgLibApi(
+        client
+    ).get_custom_detector_organizations_organization_id_custom_detectors_custom_detector_id_get(
+        organization_id=organization_id,
+        custom_detector_id=custom_detector_id,
+    )
+
+
+async def _upload_custom_detector_with_client(
+    client: AuthenticatedApiClient,
+    *,
+    organization_id: int,
+    file_path: str,
+    filename: str | None,
+    update: int | None,
+) -> CustomDetectorUploadResult:
+    """Create or update an organization-level custom detector."""
+    contents = _read_custom_detector_contents(file_path)
+    if update is None:
+        if filename is None:
+            raise RuntimeError("filename is required when creating a custom detector")
+        created_detector = await CustomDetectorsOrgLibApi(
+            client
+        ).post_custom_detector_organizations_organization_id_custom_detectors_post(
+            organization_id=organization_id,
+            custom_detector=CustomDetector(
+                filename=filename,
+                contents=contents,
+                encoding="plain",
+            ),
+        )
+        return CustomDetectorUploadResult(
+            id=created_detector.id,
+            filename=filename,
+            message=created_detector.message,
+        )
+
+    resolved_filename = filename
+    if resolved_filename is None:
+        existing_detector = await _get_custom_detector_with_client(
+            client,
+            organization_id=organization_id,
+            custom_detector_id=update,
+        )
+        resolved_filename = existing_detector.filename
+
+    updated_detector = await CustomDetectorsOrgLibApi(
+        client
+    ).put_custom_detector_organizations_organization_id_custom_detectors_custom_detector_id_put(
+        organization_id=organization_id,
+        custom_detector_id=update,
+        custom_detector=CustomDetector(
+            filename=resolved_filename,
+            contents=contents,
+            encoding="plain",
+        ),
+    )
+    return CustomDetectorUploadResult(
+        id=update,
+        filename=resolved_filename,
+        message=updated_detector.message,
+    )
+
+
+@mcp.tool()
+async def upload_custom_detector(
+    organization_id: _AhId,
+    file_path: Annotated[
+        str,
+        Field(
+            min_length=1,
+            description=(
+                "Absolute path to the custom detector definition file. "
+                "MUST follow the format documented in docs://vanguard/custom-detectors"
+            ),
+        ),
+    ],
+    filename: Annotated[
+        str | None,
+        Field(
+            min_length=1,
+            description=(
+                "Filename of this detector (not unique). Required when creating a new detector."
+            ),
+        ),
+    ] = None,
+    update: Annotated[
+        _PositiveId | None,
+        Field(description="Custom detector ID to update instead of creating a new detector."),
+    ] = None,
+) -> CustomDetectorUploadResult:
+    """Upload or update an organization-level custom detector from a local file."""
+
+    async def _run() -> CustomDetectorUploadResult:
+        _assert_edit_custom_detectors_enabled()
+        _assert_org_allowed(organization_id)
+        if update is None and filename is None:
+            raise RuntimeError("filename is required when update is not provided")
+        uploaded_detector = await _with_api_client(
+            lambda client: _upload_custom_detector_with_client(
+                client,
+                organization_id=organization_id,
+                file_path=file_path,
+                filename=filename,
+                update=update,
+            )
+        )
+        return uploaded_detector
+
+    return await _run_tool(
+        _run,
+        tool_name="upload_custom_detector",
+        safe_args={"organization_id": organization_id, "update": update},
+    )
+
+
 _RUN_ORCA_TASK_TOOL_NAME = "run_orca_task"
 _RUN_DEFI_VANGUARD_TASK_TOOL_NAME = "run_defi_vanguard_task"
 _CREATE_VERSION_FROM_FILE_TOOL_NAME = "create_version_from_file"
 _CREATE_VERSION_FROM_URL_TOOL_NAME = "create_version_from_url"
+_UPLOAD_CUSTOM_DETECTOR_TOOL_NAME = "upload_custom_detector"
 
 _TASK_RUN_TOOLS = (
     RegisteredTool(_RUN_ORCA_TASK_TOOL_NAME, run_orca_task),
@@ -1597,6 +1771,9 @@ _TASK_RUN_TOOLS = (
 _VERSION_CREATION_TOOLS = (
     RegisteredTool(_CREATE_VERSION_FROM_FILE_TOOL_NAME, create_version_from_file),
     RegisteredTool(_CREATE_VERSION_FROM_URL_TOOL_NAME, create_version_from_url),
+)
+_CUSTOM_DETECTOR_UPLOAD_TOOLS = (
+    RegisteredTool(_UPLOAD_CUSTOM_DETECTOR_TOOL_NAME, upload_custom_detector),
 )
 
 
@@ -1630,6 +1807,7 @@ def main() -> None:
         if args.list_tools:
             _set_task_runs_enabled(True)
             _set_version_creation_enabled(True)
+            _set_edit_custom_detectors_enabled(True)
             asyncio.run(_list_tools())
             return
         settings = _apply_cli_args_to_config(_load_settings_from_cli_args(args), args)
@@ -1642,6 +1820,7 @@ def main() -> None:
     _allowed_project_ids = settings.allowed_project_ids
     _set_task_runs_enabled(settings.task_runs_enabled)
     _set_version_creation_enabled(settings.version_creation_enabled)
+    _set_edit_custom_detectors_enabled(settings.edit_custom_detectors_enabled)
     _context = settings.context
     mcp.run()
 

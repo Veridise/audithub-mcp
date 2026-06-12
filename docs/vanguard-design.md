@@ -10,6 +10,16 @@ The Vanguard tools consist of:
 - `get_defi_vanguard_detectors` lists the detector catalog in a copy-pasteable format.
 - `run_defi_vanguard_task` launches a DeFi Vanguard task against a specific project version.
 
+## Resources
+
+`ah-mcp` also exposes a read-only resource for Vanguard custom-detector
+documentation:
+
+- `docs://vanguard/custom-detectors`
+
+The resource returns a JSON object with links to documentation pages for
+Vanguard custom detectors.
+
 ## Catalog Flow
 
 `get_defi_vanguard_detectors` follows this flow:

@@ -54,6 +54,7 @@ class TestDisallowedIds(unittest.IsolatedAsyncioTestCase):
         vanguard.reset_builtin_vanguard_v2_detectors_cache()
         server._set_task_runs_enabled(False)
         server._set_version_creation_enabled(False)
+        server._set_edit_custom_detectors_enabled(False)
 
     async def test_get_project_disallowed_org(self) -> None:
         with self.assertRaises(RuntimeError) as cm:
@@ -136,6 +137,29 @@ class TestDisallowedIds(unittest.IsolatedAsyncioTestCase):
                 )
             self.assertEqual(result.num_logs, 2)
             self.assertEqual(output_path.read_text(encoding="utf-8"), "line 1\nline 2\n")
+
+    async def test_upload_custom_detector_disallowed_org(self) -> None:
+        server._set_edit_custom_detectors_enabled(True)
+        with TemporaryDirectory() as tmpdir:
+            detector_path = Path(tmpdir) / "detector.luau"
+            detector_path.write_text("rule body\n", encoding="utf-8")
+            mock = AsyncMock(return_value=SimpleNamespace(id=77, message="created"))
+            with (
+                patch.object(
+                    server.CustomDetectorsOrgLibApi,
+                    "post_custom_detector_organizations_organization_id_custom_detectors_post",
+                    mock,
+                ),
+                self.assertRaises(RuntimeError) as cm,
+            ):
+                await server.upload_custom_detector(
+                    organization_id=999,
+                    file_path=str(detector_path),
+                    filename="detector.luau",
+                )
+        self.assertIn("999", str(cm.exception))
+        self.assertNotIn("frozenset", str(cm.exception))
+        mock.assert_not_awaited()
 
     async def test_task_artifacts_disallowed_org(self) -> None:
         with self.assertRaises(RuntimeError) as cm:
@@ -479,6 +503,7 @@ class TestStepCodePrivacy(unittest.IsolatedAsyncioTestCase):
         server._allowed_org_ids = frozenset()
         server._context = None
         server._set_task_runs_enabled(False)
+        server._set_edit_custom_detectors_enabled(False)
 
     async def test_step_code_not_in_audit_log(self) -> None:
         import ah_mcp.audit as audit_mod
@@ -564,6 +589,7 @@ class TestOrCaTaskPrivacy(unittest.IsolatedAsyncioTestCase):
         server._context = None
         server._set_task_runs_enabled(False)
         server._set_version_creation_enabled(False)
+        server._set_edit_custom_detectors_enabled(False)
 
     async def test_orca_payload_not_in_audit_log(self) -> None:
         import ah_mcp.audit as audit_mod
@@ -630,6 +656,7 @@ class TestVersionCreationPrivacy(unittest.IsolatedAsyncioTestCase):
         server._allowed_project_ids = frozenset()
         server._context = None
         server._set_version_creation_enabled(False)
+        server._set_edit_custom_detectors_enabled(False)
 
     async def test_version_url_not_in_audit_log(self) -> None:
         import ah_mcp.audit as audit_mod
