@@ -111,7 +111,7 @@ __all__ = [
     "audithub_sdk",
 ]
 
-mcp = FastMCP("ah")
+mcp = FastMCP("ah_mcp")
 mcp._mcp_server.experimental.enable_tasks()
 
 
