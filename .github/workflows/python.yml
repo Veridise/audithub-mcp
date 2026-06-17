@@ -40,18 +40,23 @@ jobs:
           uv sync --frozen
 
       - name: Supply chain audit
+        if: ${{ !cancelled() }}
         run: uv run pip-audit --skip-editable
 
       - name: Lint (ruff)
+        if: ${{ !cancelled() }}
         run: uv run ruff check src tests
 
       - name: Import sorting (ruff isort)
+        if: ${{ !cancelled() }}
         run: uv run ruff check --select I src tests
 
       - name: Type check (mypy)
+        if: ${{ !cancelled() }}
         run: uv run mypy
 
       - name: Unit tests
+        if: ${{ !cancelled() }}
         run: uv run python -m pytest -m "not integration"
 
   integration:
