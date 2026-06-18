@@ -1,55 +1,108 @@
-# MCP Servers
+# AuditHub MCP Server
 
-Veridise MCP servers for AI-assisted auditing. Each server exposes a Veridise data source via the [Model Context Protocol](https://modelcontextprotocol.io/). Servers are read-only by default unless an opt-in mutation mode is documented for that server.
+This repository contains the source code of `ah-mcp`, an MCP server for
+[AuditHub](https://audithub.veridise.com).
 
-| Server | Path | Data source | Access | Status |
-|---|---|---|---|---|
-| `ah` | `src/ah/` | AuditHub API | Read-only by default; opt-in OrCa task runs | Alpha |
+`ah-mcp` allows LLM-based agents to access functionality such as:
+* Discovering information about AuditHub organizations and projects
+* Launching and monitoring AuditHub tool tasks
+* Accessing AuditHub issues and findings
+
+By design, the MCP server limits the functionality to be read-only and non-destructive.
+Additional features can be enabled through the configuration file.
+
+> **Warning:** This server is currently under-developed and has not been tested.
+> Verify all tool outputs manually before acting on them.
 
 ## Prerequisites
 
 - Python 3.12+
 - [uv](https://docs.astral.sh/uv/)
 
-## Quick install
+## Installation
+
+`ah-mcp` is implemented as a Python package, but it is not yet available in PyPI.
+You must install it directly from this repository.
+
+### Global Installation
+
+If you are using the `uv` package manager, you can install `ah-mcp` using `uv`:
+
+```
+uv tool install 'git+https://github.com/Veridise/audithub-mcp'
+ah-mcp --help
+```
+
+### Local Clone
+
+From the repo root:
 
 ```bash
-# From the repo root, install the workspace and default dev tooling into the active virtual environment
+uv venv
 uv sync --active
+```
+
+If your virtual environment is already active and you just want to run the
+server entrypoint, use:
+
+```bash
+uv run ah-mcp --help
 ```
 
 ## Configuration
 
+All credentials are read from environment variables and passed into the SDK auth
+layer at startup.
+
 See the [config docs](./docs/configuration.md) for details on how to configure
 `ah-mcp`.
 
-### Configure your agent
+| Variable | Required | Description |
+|---|---|---|
+| `AUDITHUB_BASE_URL` | Yes | Base URL of the AuditHub REST API, e.g. `https://audithub.veridise.com/api/v1` |
+| `AUDITHUB_OIDC_CONFIGURATION_URL` | Yes | OpenID Connect discovery document URL for the identity provider |
+| `AUDITHUB_OIDC_CLIENT_ID` | Yes | OIDC client identifier |
+| `AUDITHUB_OIDC_CLIENT_SECRET` | Yes | OIDC client secret. Keep out of logs and shell history |
+| `AH_ALLOWED_ORG_IDS` | Yes | Comma-separated list of numeric organization IDs the server may access, e.g. `"1,2,3"` |
+| `AH_ALLOWED_PROJECT_IDS` | Yes | Comma-separated list of numeric project IDs the server may access, e.g. `"10,20"` |
+| `AH_ENABLE_TASK_RUNS` | No | Set to `1` to register the opt-in tools for AuditHub tasks; in config files, set `capabilities.task_runs: true` |
+| `AH_ENABLE_VERSION_CREATION` | No | Set to `1` to register the opt-in `create_version_from_url` mutation tool; in config files, set `capabilities.version_creation: true` |
 
-Once you have decided on how to configure `ah-mcp`, you must enable it in your
-agent's MCP configuration file (`.codex/config.json` for Codex,
-`.claude/mcp.json` for Claude Code, or your ChatGPT Desktop MCP config).
+CLI flags `--allowed-org-ids` and `--allowed-project-ids` override the
+corresponding environment variables when both are supplied. Use
+`--enable-task-runs` to register the task tools without setting
+`AH_ENABLE_TASK_RUNS`, or `--enable-version-creation` to register
+`create_version_from_url` without setting `AH_ENABLE_VERSION_CREATION`.
 
-For a JSON/YAML file `ah-mcp` config, copy `src/ah/.env.example` to a fixed
-location and fill in the required settings.
-The MCP server config should pass the config directly to `ah-mcp`:
+Custom detector uploads are config-file only for now: set
+`capabilities.edit_custom_detectors: true` to register
+`upload_custom_detector`.
 
-```json
-{
-  "mcpServers": {
-    "ah": {
-      "command": "ah-mcp",
-      "args": [
-        "--config",
-        "/absolute/path/to/your/ah-mcp-config.json"
-      ]
-    }
-  }
-}
+## Running the Server
+
+Copy [`.env.example`](./.env.example) to `.env`, fill in your values, then:
+
+```bash
+set -a && source .env && set +a && uv run ah-mcp
 ```
 
-To configure `ah-mcp` through environment variables only, copy
-`src/ah/.env.example` to a fixed location and fill in the required settings.
-The MCP server config should load the environment before starting `ah-mcp`:
+All required variables in `.env` must be set before the server starts. Missing
+variables cause an immediate exit with a clear error listing which are absent.
+
+To print the registered MCP tools and their JSON schemas without starting the
+server, run:
+
+```bash
+uv run ah-mcp --list-tools
+```
+
+## Configure for Agents
+
+All credentials are loaded from your `.env` file, so nothing secret goes in the
+agent config.
+
+Add to your agent's MCP configuration, for example `.codex/config.json` for
+Codex, `.claude/mcp.json` for Claude Code, or your ChatGPT Desktop MCP config:
 
 ```json
 {
@@ -65,28 +118,92 @@ The MCP server config should load the environment before starting `ah-mcp`:
 }
 ```
 
-Replace `/absolute/path/to/ah.env` with the actual path to your `.env` file (see `src/ah/.env.example`).
-The `ah-mcp` configuration should contain all credentials and allowlist
-settings; no secrets should be configured in the agent config file itself.
+Replace `/absolute/path/to/mcp-servers` with this repository path and
+`/absolute/path/to/ah.env` with the actual path to your `.env` file. The
+template in [`mcp.json.example`](./mcp.json.example) shows the same shape.
 
-## Security model
+## Available MCP Tools
 
-All servers in this repo are read-only by default:
+| Tool | Description |
+|---|---|
+| `get_my_organizations` | List all AuditHub organizations the authenticated user belongs to |
+| `get_organization_name_index` | List allowlisted organizations as deterministic name-to-ID lookup entries |
+| `get_defi_vanguard_detectors` | List all DeFi Vanguard detectors for an organization using the Vanguard listing block format |
+| `get_project` | Get details for a specific project |
+| `get_project_name_index` | List allowlisted projects in an organization as deterministic name-to-ID lookup entries |
+| `get_latest_version` | Get the latest version of a project |
+| `get_version_name_index` | List project versions as deterministic name-to-ID lookup entries |
+| `get_task_info` | Get status and details for an AuditHub task |
+| `get_task_artifacts` | List sanitized artifact metadata for an AuditHub task |
+| `get_task_artifact` | Fetch a task artifact by ID as base64-encoded content |
+| `get_task_logs` | Get logs for one or more steps of a task and write each result to a local output file |
+| `get_task_findings` | Fetch findings for a task and write them to a local output file |
+| `wait_for_task_completion` | Poll a task until no pending steps remain or the timeout is reached, then return the latest task snapshot and completion state; with no timeout, task-capable clients can invoke it as a task |
+| `parse_findings_from_task_log` | Parse one or more task log files into JSON containing findings plus counts written to a local absolute output path |
+| `get_version_comments` | Get comments for a specific project version |
+| `get_version_comment_threads` | Get comment threads for a specific project version |
+| `get_thread_comments` | Get comments for a specific thread within a project version |
+| `get_project_issues` | Get all issues for a project |
+| `get_project_issue` | Get a specific issue from a project |
+| `get_project_comments` | Get all comments for a project across all versions |
+| `run_orca_task` | Start an OrCa task for a project version; registered only when task runs are explicitly enabled |
+| `run_defi_vanguard_task` | Start a DeFi Vanguard task for a project version; registered only when task runs are explicitly enabled |
+| `create_version_from_file` | Create a project version by uploading a local `.zip` archive; registered only when version creation is explicitly enabled |
+| `create_version_from_url` | Create a project version from a git repository or archive URL; registered only when version creation is explicitly enabled |
 
-1. **Default read-only tool surface** -- default tools start with `get_`
-2. **Default GET-only HTTP** -- mutation paths are absent unless explicitly enabled
-3. **Credential isolation** -- secrets from env vars, never in tool output
-4. **ID allowlisting** -- access restricted to configured IDs
+All tools return typed Python objects backed by `audithub-sdk` models. On
+error, tools raise `RuntimeError` with a sanitized plain-text message; the MCP
+protocol surfaces this as an error response to the caller.
 
-## Adding a new server
+The name index tools only expose organizations and projects that already pass
+the configured allowlists. Version name lookup requires an allowlisted
+organization and project. These tools help callers resolve stable human-readable
+names to internal AuditHub IDs before invoking the existing ID-based tools.
 
-1. Create `src/<name>/` with its own `pyproject.toml` and `.python-version`
-2. Add `mcp>=1.0.0` as a dependency
-3. Implement read-only tools following the `ah` server as a template
-4. Add security tests (read-only surface, allowlist enforcement, credential isolation)
-5. Update the server table in this README
-6. Add the server to the CI matrix in `.github/workflows/python.yml`
+## Security Model
+
+- **Read-only by default.** Default tools are named `get_*` and only invoke generated `audithub-sdk` GET endpoints.
+- **Task completion polling.** `wait_for_task_completion` repeatedly fetches task details until no pending steps remain or the timeout is reached, then returns the latest sanitized `Task` snapshot with a boolean completion flag. When called with no timeout by a task-capable client, it can run as a task instead of blocking the request.
+- **Opt-in OrCa task execution.** The `run_orca_task` mutation tool is registered only when `AH_ENABLE_TASK_RUNS=1` or `--enable-task-runs` is supplied. It calls the generated OrCa POST endpoint through `audithub-sdk`.
+- **Opt-in DeFi Vanguard task execution.** The `run_defi_vanguard_task` mutation tool is registered under the same task-run opt-in gate. Its inputs are flattened at the top level: `organization_id`, `project_id`, `version_id`, detector selections, and the runtime options. Pass detector selections as two-item JSON arrays `[type, id]`, where builtin selectors use a built-in detector code from `get_defi_vanguard_detectors`, and custom selectors use the catalog id shown by the same tool. The server resolves those selections through the backend detector catalog before calling the generated DeFi Vanguard v2 POST endpoint.
+- **On-chain OrCa mode.** When launching OrCa against already deployed contracts, pass `deployment_info_file` as a path ending in `.deployment.json`. The server normalizes that into `on_chain=True` and rejects mismatched paths early so callers do not accidentally launch a local Foundry-style run.
+- **Opt-in version creation.** The `create_version_from_url` mutation tool is registered only when `AH_ENABLE_VERSION_CREATION=1` or `--enable-version-creation` is supplied. It calls the generated project version URL POST endpoint through `audithub-sdk`.
+- **Local findings parsing.** The `parse_findings_from_task_log` utility tool reads one or more local task log files, extracts findings with the shared log parser, and writes a JSON file containing the parsed findings plus the total finding count and per-log counts. It does not call the AuditHub API.
+- **Detector catalog cache.** The DeFi Vanguard v2 built-in detector list is fetched lazily from the AuditHub configuration endpoint and cached in-process for one day. Custom detectors are fetched live on each request from both the organization library and the standard library.
+- **Detector listing format.** `get_defi_vanguard_detectors` returns one block per detector. Each block starts with `detector: <json>` where `<json>` is a JSON value matching `DefiVanguardV2DetectorSelectionInput`, followed by `title:`. Standard-library custom detectors also include `description:` loaded from the detector payload. Each block ends with `------`.
+- **Credential isolation.** OIDC credentials are read from the environment once at startup and passed into `audithub_sdk_ext.AuthenticatedApiClient`. They are never accepted as tool arguments and are not surfaced in tool outputs or sanitized error messages.
+- **ID allowlisting.** The server refuses to access any organization or project whose numeric ID was not explicitly included in `AH_ALLOWED_ORG_IDS` / `AH_ALLOWED_PROJECT_IDS`. The check runs before any network request.
+- **SDK-only transport.** All AuditHub interaction flows through `audithub-sdk` and `audithub_sdk_ext`; there is no raw HTTP helper in the MCP server.
+
+## Development Workflow
+
+- Run tests: `uv run pytest`
+- Type check: `uv run mypy`
+- Lint: `uv run ruff check`
+- Format code: `uv run ruff format`
+
+### Override `audithub-sdk` Locally
+
+To test `ah-mcp` against a local checkout of `audithub-sdk`, add a path source
+override in the root [`pyproject.toml`](./pyproject.toml), then re-sync the
+environment.
+
+Example root `pyproject.toml` override:
+
+```toml
+[tool.uv.sources]
+audithub-sdk = { path = "/absolute/path/to/audithub-sdk", editable = true }
+```
+
+Then run:
+
+```bash
+uv sync --active
+```
+
+To return to the pinned version, remove the `audithub-sdk` entry from
+`[tool.uv.sources]` and run `uv sync --active` again.
 
 ## License
 
-[Apache 2.0](LICENSE)
+[Apache 2.0](./LICENSE)

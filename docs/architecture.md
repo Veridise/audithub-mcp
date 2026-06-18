@@ -5,8 +5,8 @@ Each server exposes a Veridise data source via the Model Context Protocol.
 
 ## Structure
 
-Each server lives in `src/<name>/` as a self-contained Python package with its own
-`pyproject.toml`, tests, and configuration.
+This repository contains a single MCP server, `ah-mcp`, with package code in
+`src/ah_mcp/`, tests in `tests/`, and configuration examples at the repo root.
 
 ## Security invariants
 

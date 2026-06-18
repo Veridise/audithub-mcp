@@ -10,6 +10,6 @@ updates:
           - "*"
 
   - package-ecosystem: "pip"
-    directory: "/src/ah"
+    directory: "/"
     schedule:
       interval: "weekly"

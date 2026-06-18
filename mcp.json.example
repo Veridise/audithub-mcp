@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "ah": {
+      "command": "bash",
+      "args": ["-c", "set -a && source /absolute/path/to/ah.env && set +a && uv run ah-mcp"]
+    }
+  }
+}

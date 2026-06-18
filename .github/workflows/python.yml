@@ -10,15 +10,8 @@ permissions:
 
 jobs:
   quality:
-    name: "Quality / ${{ matrix.server }}"
+    name: Quality
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        server: [ah]
-
-    defaults:
-      run:
-        working-directory: "src/${{ matrix.server }}"
 
     steps:
       - name: Checkout
@@ -32,12 +25,10 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
         with:
-          python-version-file: "src/${{ matrix.server }}/.python-version"
+          python-version-file: ".python-version"
 
       - name: Install dependencies
-        working-directory: "."
-        run: |
-          uv sync --frozen
+        run: uv sync --frozen
 
       - name: Supply chain audit
         if: ${{ !cancelled() }}
@@ -60,16 +51,9 @@ jobs:
         run: uv run python -m pytest -m "not integration"
 
   integration:
-    name: "Integration / ${{ matrix.server }}"
+    name: Integration
     runs-on: ubuntu-latest
     environment: "Configure CI/CD Testing"
-    strategy:
-      matrix:
-        server: [ah]
-
-    defaults:
-      run:
-        working-directory: "src/${{ matrix.server }}"
 
     steps:
       - name: Checkout
@@ -83,12 +67,10 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5.6.0
         with:
-          python-version-file: "src/${{ matrix.server }}/.python-version"
+          python-version-file: ".python-version"
 
       - name: Install dependencies
-        working-directory: "."
-        run: |
-          uv sync --frozen
+        run: uv sync --frozen
 
       - name: Integration tests
         run: uv run python -m pytest

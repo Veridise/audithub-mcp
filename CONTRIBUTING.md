@@ -3,25 +3,31 @@
 ## Local development setup
 
 1. Install [uv](https://docs.astral.sh/uv/) and Python 3.12+.
-2. Clone this repo and `cd` into a server directory:
+2. Clone this repo and `cd` into the repo root, then set up your virtualenv:
 
 ```bash
-cd src/ah
 uv venv
-uv pip install -e ".[dev]"
+uv sync --active
 ```
 
-3. Run checks:
+3. Run checks inside the virtualenv:
 
 ```bash
+source ./.venv/bin/activate
 ruff check src tests
 mypy
 pytest
 ```
 
-## Adding a new server
+## Repository Structure
 
-Follow the checklist in [AGENTS.md](AGENTS.md#adding-a-new-server). All servers must satisfy the security invariants documented there.
+This repository contains a single MCP server at the repo root:
+
+- package code in `src/ah_mcp/`
+- tests in `tests/`
+- configuration examples at the root
+
+The security invariants documented in [AGENTS.md](AGENTS.md) still apply.
 
 ## Pull request process
 
