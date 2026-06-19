@@ -1,7 +1,7 @@
 # Vanguard Tools
 
 This document describes the intended high-level flow and behavior of the DeFi
-Vanguard-related MCP tools in `ah-mcp`.
+Vanguard-related MCP tools in `audithub-mcp`.
 
 ## Overview
 
@@ -12,7 +12,7 @@ The Vanguard tools consist of:
 
 ## Resources
 
-`ah-mcp` also exposes a read-only resource for Vanguard custom-detector
+`audithub-mcp` also exposes a read-only resource for Vanguard custom-detector
 documentation:
 
 - `docs://vanguard/custom-detectors`

@@ -1,4 +1,4 @@
-"""Tests for the SDK-backed ah_mcp server."""
+"""Tests for the SDK-backed audithub_mcp server."""
 
 from __future__ import annotations
 
@@ -21,9 +21,9 @@ from audithub_sdk.models.custom_detector_from_standard_library import (  # noqa:
 from mcp import types as mcp_types
 from pydantic import ValidationError
 
-import ah_mcp.server as server  # noqa: E402
-import ah_mcp.vanguard as vanguard  # noqa: E402
-from ah_mcp.models import (  # noqa: E402
+import audithub_mcp.server as server  # noqa: E402
+import audithub_mcp.vanguard as vanguard  # noqa: E402
+from audithub_mcp.models import (  # noqa: E402
     Comment,
     CustomDetectorUploadInput,
     CustomDetectorUploadResult,
@@ -438,7 +438,7 @@ class TestCtxCache(unittest.TestCase):
             config_path = Path(tmpdir) / "config.yaml"
             config_path.write_text(config_text, encoding="utf-8")
             server._context = None
-            argv = ["ah-mcp", "--config", str(config_path)]
+            argv = ["audithub-mcp", "--config", str(config_path)]
             try:
                 with (
                     patch.dict(os.environ, {}, clear=True),
@@ -465,7 +465,7 @@ class TestCtxCache(unittest.TestCase):
             **_FULL_ENV,
         }
         server._context = None
-        argv = ["ah-mcp", "--enable-task-runs"]
+        argv = ["audithub-mcp", "--enable-task-runs"]
         try:
             with (
                 patch.dict(os.environ, allow_env, clear=True),
@@ -486,7 +486,7 @@ class TestCtxCache(unittest.TestCase):
             **_FULL_ENV,
         }
         server._context = None
-        argv = ["ah-mcp", "--enable-version-creation"]
+        argv = ["audithub-mcp", "--enable-version-creation"]
         try:
             with (
                 patch.dict(os.environ, allow_env, clear=True),
@@ -510,7 +510,7 @@ class TestCtxCache(unittest.TestCase):
             "AH_ENABLE_VERSION_CREATION": "1",
         }
         server._context = None
-        argv = ["ah-mcp", "--config", str(config_path)]
+        argv = ["audithub-mcp", "--config", str(config_path)]
         try:
             with (
                 patch.dict(os.environ, env, clear=True),
@@ -534,7 +534,7 @@ class TestCtxCache(unittest.TestCase):
 
     def test_main_lists_tools_and_exits(self) -> None:
         server._context = None
-        argv = ["ah-mcp", "--list-tools"]
+        argv = ["audithub-mcp", "--list-tools"]
         try:
             with (
                 patch.dict(os.environ, _FULL_ENV, clear=True),
@@ -567,7 +567,7 @@ class TestCtxCache(unittest.TestCase):
             "AH_ENABLE_VERSION_CREATION": "1",
         }
         server._context = None
-        argv = ["ah-mcp", "--config", str(config_path), "--no-env-config"]
+        argv = ["audithub-mcp", "--config", str(config_path), "--no-env-config"]
         try:
             with (
                 patch.dict(os.environ, env, clear=True),

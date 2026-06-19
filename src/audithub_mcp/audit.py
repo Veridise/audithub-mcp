@@ -1,7 +1,7 @@
 """Structured audit logging for AuditHub MCP tool calls.
 
 Records tool invocations, completion times, and sanitized errors to the
-``ah_mcp.audit`` logger.  Never logs: step_code content, response bodies,
+``audithub_mcp.audit`` logger.  Never logs: step_code content, response bodies,
 or credential values.
 """
 
@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 
-logger = logging.getLogger("ah_mcp.audit")
+logger = logging.getLogger("audithub_mcp.audit")
 
 _MAX_ERROR_LEN: int = 200
 

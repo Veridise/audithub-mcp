@@ -23,7 +23,7 @@ pytest
 
 This repository contains a single MCP server at the repo root:
 
-- package code in `src/ah_mcp/`
+- package code in `src/audithub_mcp/`
 - tests in `tests/`
 - configuration examples at the root
 

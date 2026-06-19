@@ -1,4 +1,4 @@
-"""Integration tests for ah_mcp.server against a live AuditHub deployment."""
+"""Integration tests for audithub_mcp.server against a live AuditHub deployment."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from ah_mcp.config import _load_raw_config_from_path
+from audithub_mcp.config import _load_raw_config_from_path
 
 
 def _bootstrap_from_config_file() -> None:
@@ -39,8 +39,8 @@ try:
 except ImportError:
     pytest.skip("audithub-sdk not installed — skipping integration tests", allow_module_level=True)
 
-import ah_mcp.server as server  # noqa: E402
-from ah_mcp.models import (  # noqa: E402
+import audithub_mcp.server as server  # noqa: E402
+from audithub_mcp.models import (  # noqa: E402
     Comment,
     IssueDetails,
     IssueForList,

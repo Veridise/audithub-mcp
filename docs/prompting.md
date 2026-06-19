@@ -67,7 +67,7 @@ Fetch the logs from the task and parse the findings.
 Triage the reported findings by confirming against the project source code.
 ```
 
-NOTE: currently, `ah-mcp` does not provide a way to directly obtain findings information
+NOTE: currently, `audithub-mcp` does not provide a way to directly obtain findings information
 (as shown in the "Findings" table in the web interface).
 We plan on simplifying the prompting method in the future.
 

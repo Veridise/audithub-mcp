@@ -1,4 +1,4 @@
-"""Security-focused tests for the SDK-backed ah_mcp server."""
+"""Security-focused tests for the SDK-backed audithub_mcp server."""
 
 from __future__ import annotations
 
@@ -8,9 +8,9 @@ from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
-import ah_mcp.server as server  # noqa: E402
-import ah_mcp.vanguard as vanguard  # noqa: E402
-from ah_mcp.models import (  # noqa: E402
+import audithub_mcp.server as server  # noqa: E402
+import audithub_mcp.vanguard as vanguard  # noqa: E402
+from audithub_mcp.models import (  # noqa: E402
     DefiVanguardV2TaskInput,
     OrCaAdHocHintReference,
     OrCaAdHocSpecReference,
@@ -506,7 +506,7 @@ class TestStepCodePrivacy(unittest.IsolatedAsyncioTestCase):
         server._set_edit_custom_detectors_enabled(False)
 
     async def test_step_code_not_in_audit_log(self) -> None:
-        import ah_mcp.audit as audit_mod
+        import audithub_mcp.audit as audit_mod
 
         step_code = "../../../etc/passwd"
         with TemporaryDirectory() as tmpdir:
@@ -547,7 +547,7 @@ class TestArtifactPrivacy(unittest.IsolatedAsyncioTestCase):
         server._context = None
 
     async def test_artifact_id_not_in_audit_log(self) -> None:
-        import ah_mcp.audit as audit_mod
+        import audithub_mcp.audit as audit_mod
 
         artifact_id = "SECRET_ARTIFACT_ID"
         response = SimpleNamespace(raw_data=b"artifact", headers={"content-type": "text/plain"})
@@ -592,7 +592,7 @@ class TestOrCaTaskPrivacy(unittest.IsolatedAsyncioTestCase):
         server._set_edit_custom_detectors_enabled(False)
 
     async def test_orca_payload_not_in_audit_log(self) -> None:
-        import ah_mcp.audit as audit_mod
+        import audithub_mcp.audit as audit_mod
 
         with (
             patch.object(
@@ -614,7 +614,7 @@ class TestOrCaTaskPrivacy(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn("SECRET_HINT_CONTENT", args)
 
     async def test_orca_payload_not_in_error_log(self) -> None:
-        import ah_mcp.audit as audit_mod
+        import audithub_mcp.audit as audit_mod
 
         with (
             patch.object(
@@ -659,7 +659,7 @@ class TestVersionCreationPrivacy(unittest.IsolatedAsyncioTestCase):
         server._set_edit_custom_detectors_enabled(False)
 
     async def test_version_url_not_in_audit_log(self) -> None:
-        import ah_mcp.audit as audit_mod
+        import audithub_mcp.audit as audit_mod
 
         url = "https://example.com/private/archive.zip?token=SECRET_URL_TOKEN"
         with (
@@ -685,7 +685,7 @@ class TestVersionCreationPrivacy(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn("SECRET_URL_TOKEN", args)
 
     async def test_version_archive_not_in_audit_log(self) -> None:
-        import ah_mcp.audit as audit_mod
+        import audithub_mcp.audit as audit_mod
 
         archive = "SECRET_ARCHIVE_CONTENTS"
         with (

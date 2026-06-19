@@ -2,7 +2,7 @@
 
 ## How-to
 
-`ah-mcp` can be configured in three ways:
+`audithub-mcp` can be configured in three ways:
 
 1. Environment variables only.
    - Set the required `AUDITHUB_*` credential environment variables and the

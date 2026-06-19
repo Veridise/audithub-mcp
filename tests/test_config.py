@@ -12,7 +12,7 @@ import pytest
 import yaml
 from pydantic import SecretStr
 
-import ah_mcp.config as config
+import audithub_mcp.config as config
 
 AuditHubInputConfig = config.AuditHubInputConfig
 StartupConfigError = config.StartupConfigError
@@ -129,8 +129,8 @@ def test_update_config_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
     assert input_config.capabilities.edit_custom_detectors is False
 
 
-def test_ah_mcp_rejects_invalid_config() -> None:
-    """Check that `ah-mcp` reports missing config settings."""
+def test_audithub_mcp_rejects_invalid_config() -> None:
+    """Check that `audithub-mcp` reports missing config settings."""
     env = os.environ.copy()
     env.update(
         {
@@ -144,7 +144,7 @@ def test_ah_mcp_rejects_invalid_config() -> None:
     )
 
     result = subprocess.run(
-        ["ah-mcp"],
+        ["audithub-mcp"],
         env=env,
         capture_output=True,
         text=True,

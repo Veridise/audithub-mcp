@@ -1,9 +1,9 @@
 # AuditHub MCP Server
 
-This repository contains the source code of `ah-mcp`, an MCP server for
+This repository contains the source code of `audithub-mcp`, an MCP server for
 [AuditHub](https://audithub.veridise.com).
 
-`ah-mcp` allows LLM-based agents to access functionality such as:
+`audithub-mcp` allows LLM-based agents to access functionality such as:
 * Discovering information about AuditHub organizations and projects
 * Launching and monitoring AuditHub tool tasks
 * Accessing AuditHub issues and findings
@@ -21,16 +21,16 @@ Additional features can be enabled through the configuration file.
 
 ## Installation
 
-`ah-mcp` is implemented as a Python package, but it is not yet available in PyPI.
+`audithub-mcp` is implemented as a Python package, but it is not yet available in PyPI.
 You must install it directly from this repository.
 
 ### Global Installation
 
-If you are using the `uv` package manager, you can install `ah-mcp` using `uv`:
+If you are using the `uv` package manager, you can install `audithub-mcp` using `uv`:
 
 ```
 uv tool install 'git+https://github.com/Veridise/audithub-mcp'
-ah-mcp --help
+audithub-mcp --help
 ```
 
 ### Local Clone
@@ -46,7 +46,7 @@ If your virtual environment is already active and you just want to run the
 server entrypoint, use:
 
 ```bash
-uv run ah-mcp --help
+uv run audithub-mcp --help
 ```
 
 ## Configuration
@@ -55,7 +55,7 @@ All credentials are read from environment variables and passed into the SDK auth
 layer at startup.
 
 See the [config docs](./docs/configuration.md) for details on how to configure
-`ah-mcp`.
+`audithub-mcp`.
 
 | Variable | Required | Description |
 |---|---|---|
@@ -83,7 +83,7 @@ Custom detector uploads are config-file only for now: set
 Copy [`.env.example`](./.env.example) to `.env`, fill in your values, then:
 
 ```bash
-set -a && source .env && set +a && uv run ah-mcp
+set -a && source .env && set +a && uv run audithub-mcp
 ```
 
 All required variables in `.env` must be set before the server starts. Missing
@@ -93,7 +93,7 @@ To print the registered MCP tools and their JSON schemas without starting the
 server, run:
 
 ```bash
-uv run ah-mcp --list-tools
+uv run audithub-mcp --list-tools
 ```
 
 ## Configure for Agents
@@ -111,7 +111,7 @@ Codex, `.claude/mcp.json` for Claude Code, or your ChatGPT Desktop MCP config:
       "command": "bash",
       "args": [
         "-c",
-        "cd /absolute/path/to/mcp-servers && set -a && source /absolute/path/to/ah.env && set +a && uv run ah-mcp"
+        "cd /absolute/path/to/mcp-servers && set -a && source /absolute/path/to/ah.env && set +a && uv run audithub-mcp"
       ]
     }
   }
@@ -184,7 +184,7 @@ names to internal AuditHub IDs before invoking the existing ID-based tools.
 
 ### Override `audithub-sdk` Locally
 
-To test `ah-mcp` against a local checkout of `audithub-sdk`, add a path source
+To test `audithub-mcp` against a local checkout of `audithub-sdk`, add a path source
 override in the root [`pyproject.toml`](./pyproject.toml), then re-sync the
 environment.
 

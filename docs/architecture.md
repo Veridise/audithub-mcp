@@ -5,8 +5,8 @@ Each server exposes a Veridise data source via the Model Context Protocol.
 
 ## Structure
 
-This repository contains a single MCP server, `ah-mcp`, with package code in
-`src/ah_mcp/`, tests in `tests/`, and configuration examples at the repo root.
+This repository contains a single MCP server, `audithub-mcp`, with package code in
+`src/audithub_mcp/`, tests in `tests/`, and configuration examples at the repo root.
 
 ## Security invariants
 

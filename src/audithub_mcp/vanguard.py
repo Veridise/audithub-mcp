@@ -24,7 +24,7 @@ from audithub_sdk.models.root_model_list_union_custom_detector_from_version_cust
 from audithub_sdk.models.vanguard_detector import VanguardDetector
 from pydantic import TypeAdapter, ValidationError
 
-from ah_mcp.models import DefiVanguardV2DetectorSelectionInput, DefiVanguardV2TaskInput
+from audithub_mcp.models import DefiVanguardV2DetectorSelectionInput, DefiVanguardV2TaskInput
 
 _VANGUARD_DETECTOR_CACHE_LIFETIME_SECONDS = 24 * 60 * 60
 _builtin_vanguard_v2_detectors_cache: tuple[float, GlobalVanguardV2Configuration] | None = None

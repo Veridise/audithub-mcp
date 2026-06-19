@@ -2,7 +2,7 @@
   "mcpServers": {
     "ah": {
       "command": "bash",
-      "args": ["-c", "set -a && source /absolute/path/to/ah.env && set +a && uv run ah-mcp"]
+      "args": ["-c", "set -a && source /absolute/path/to/ah.env && set +a && uv run audithub-mcp"]
     }
   }
 }

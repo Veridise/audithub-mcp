@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from pydantic import TypeAdapter
 
-import ah_mcp.vanguard as vanguard  # noqa: E402
-from ah_mcp.models import DefiVanguardV2TaskInput  # noqa: E402
+import audithub_mcp.vanguard as vanguard  # noqa: E402
+from audithub_mcp.models import DefiVanguardV2TaskInput  # noqa: E402
 
 
 def test_formats_builtin_detector_entry() -> None:

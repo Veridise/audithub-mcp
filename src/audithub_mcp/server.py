@@ -55,10 +55,10 @@ from mcp.server.fastmcp import Context, FastMCP
 from mcp.shared.exceptions import McpError
 from pydantic import Field, TypeAdapter, ValidationError
 
-from ah_mcp import config as server_config
-from ah_mcp import parse_fio_logs, vanguard
-from ah_mcp.audit import log_call_error, log_call_start, log_call_success
-from ah_mcp.models import (
+from audithub_mcp import config as server_config
+from audithub_mcp import parse_fio_logs, vanguard
+from audithub_mcp.audit import log_call_error, log_call_start, log_call_success
+from audithub_mcp.models import (
     Comment,
     CustomDetectorUploadResult,
     DefiVanguardV2DetectorSelectionInput,
@@ -114,7 +114,7 @@ __all__ = [
     "audithub_sdk",
 ]
 
-mcp = FastMCP("ah_mcp")
+mcp = FastMCP("audithub_mcp")
 mcp._mcp_server.experimental.enable_tasks()
 
 _VANGUARD_CUSTOM_DETECTOR_DOCS_RESOURCE_URI = "docs://vanguard/custom-detectors"
@@ -1800,7 +1800,7 @@ _mark_wait_for_task_completion_as_task_required()
 
 
 def main() -> None:
-    """Entry point for the ``ah-mcp`` console script."""
+    """Entry point for the ``audithub-mcp`` console script."""
     parser = _build_arg_parser()
     args, _ = parser.parse_known_args()
     try:

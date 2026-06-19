@@ -1,4 +1,4 @@
-"""Direct unit tests for ah_mcp.audit logging functions."""
+"""Direct unit tests for audithub_mcp.audit logging functions."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import logging
 import unittest
 from unittest.mock import patch
 
-import ah_mcp.audit as audit
+import audithub_mcp.audit as audit
 
 
 class TestLogCallStart(unittest.TestCase):
@@ -43,7 +43,7 @@ class TestLogCallStart(unittest.TestCase):
         mock_info.assert_called_once()
 
     def test_log_level_is_info(self) -> None:
-        with self.assertLogs("ah_mcp.audit", level=logging.INFO) as ctx:
+        with self.assertLogs("audithub_mcp.audit", level=logging.INFO) as ctx:
             audit.log_call_start("get_project", {"organization_id": 1})
         self.assertTrue(any("INFO" in r for r in ctx.output))
 
@@ -71,7 +71,7 @@ class TestLogCallSuccess(unittest.TestCase):
         self.assertIn("get_latest_version", call_str)
 
     def test_log_level_is_info(self) -> None:
-        with self.assertLogs("ah_mcp.audit", level=logging.INFO) as ctx:
+        with self.assertLogs("audithub_mcp.audit", level=logging.INFO) as ctx:
             audit.log_call_success("get_project", 10.0)
         self.assertTrue(any("INFO" in r for r in ctx.output))
 
@@ -122,7 +122,7 @@ class TestLogCallError(unittest.TestCase):
         self.assertEqual(len(truncated), 200)
 
     def test_log_level_is_error(self) -> None:
-        with self.assertLogs("ah_mcp.audit", level=logging.ERROR) as ctx:
+        with self.assertLogs("audithub_mcp.audit", level=logging.ERROR) as ctx:
             audit.log_call_error("get_project", "failed", 1.0)
         self.assertTrue(any("ERROR" in r for r in ctx.output))
 
