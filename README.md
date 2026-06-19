@@ -49,78 +49,59 @@ server entrypoint, use:
 uv run audithub-mcp --help
 ```
 
-## Configuration
+## Using `audithub-mcp`
 
-All credentials are read from environment variables and passed into the SDK auth
-layer at startup.
+To use `audithub-mcp`, you need to configure two parts: your agent and the
+`audithub-mcp` config file.
+Once both are configured, the agent should automatically start the MCP server
+and use its tools.
 
-See the [config docs](./docs/configuration.md) for details on how to configure
-`audithub-mcp`.
+### Agent Configuration
 
-| Variable | Required | Description |
-|---|---|---|
-| `AUDITHUB_BASE_URL` | Yes | Base URL of the AuditHub REST API, e.g. `https://audithub.veridise.com/api/v1` |
-| `AUDITHUB_OIDC_CONFIGURATION_URL` | Yes | OpenID Connect discovery document URL for the identity provider |
-| `AUDITHUB_OIDC_CLIENT_ID` | Yes | OIDC client identifier |
-| `AUDITHUB_OIDC_CLIENT_SECRET` | Yes | OIDC client secret. Keep out of logs and shell history |
-| `AH_ALLOWED_ORG_IDS` | Yes | Comma-separated list of numeric organization IDs the server may access, e.g. `"1,2,3"` |
-| `AH_ALLOWED_PROJECT_IDS` | Yes | Comma-separated list of numeric project IDs the server may access, e.g. `"10,20"` |
-| `AH_ENABLE_TASK_RUNS` | No | Set to `1` to register the opt-in tools for AuditHub tasks; in config files, set `capabilities.task_runs: true` |
-| `AH_ENABLE_VERSION_CREATION` | No | Set to `1` to register the opt-in `create_version_from_url` mutation tool; in config files, set `capabilities.version_creation: true` |
+To enable `audithub-mcp` in your agent, you must add it to the MCP server
+config for your agent.
 
-CLI flags `--allowed-org-ids` and `--allowed-project-ids` override the
-corresponding environment variables when both are supplied. Use
-`--enable-task-runs` to register the task tools without setting
-`AH_ENABLE_TASK_RUNS`, or `--enable-version-creation` to register
-`create_version_from_url` without setting `AH_ENABLE_VERSION_CREATION`.
+The following examples assume that `audithub-mcp` is available on `PATH`, and
+that your config file is located at `~/.config/audithub-mcp/config.yaml`.
 
-Custom detector uploads are config-file only for now: set
-`capabilities.edit_custom_detectors: true` to register
-`upload_custom_detector`.
-
-## Running the Server
-
-Copy [`.env.example`](./.env.example) to `.env`, fill in your values, then:
-
-```bash
-set -a && source .env && set +a && uv run audithub-mcp
-```
-
-All required variables in `.env` must be set before the server starts. Missing
-variables cause an immediate exit with a clear error listing which are absent.
-
-To print the registered MCP tools and their JSON schemas without starting the
-server, run:
-
-```bash
-uv run audithub-mcp --list-tools
-```
-
-## Configure for Agents
-
-All credentials are loaded from your `.env` file, so nothing secret goes in the
-agent config.
-
-Add to your agent's MCP configuration, for example `.codex/config.json` for
-Codex, `.claude/mcp.json` for Claude Code, or your ChatGPT Desktop MCP config:
-
-```json
-{
-  "mcpServers": {
-    "ah": {
-      "command": "bash",
-      "args": [
-        "-c",
-        "cd /absolute/path/to/mcp-servers && set -a && source /absolute/path/to/ah.env && set +a && uv run audithub-mcp"
-      ]
+* Codex CLI
+  * For interactive setup, use `codex mcp add audithub-mcp`
+  * If you want to set it up with a config file, add the following to your `.codex/config.toml`:
+    ```toml
+    [mcp_servers.audithub-mcp]
+    command = "audithub-mcp"
+    args = ["--config", "~/.config/audithub-mcp/config.yaml"]
+    ```
+* Claude Code
+  * For interactive setup, use `claude mcp add audithub-mcp audithub-mcp`
+  * If you want to set it up with a config file, add the following to your `.claude/mcp.json`:
+    ```json
+    {
+      "mcpServers": {
+        "audithub-mcp": {
+          "command": "audithub-mcp",
+          "args": [
+            "--config",
+            "~/.config/audithub-mcp/config.yaml"
+          ]
+        }
+      }
     }
-  }
-}
-```
+    ```
 
-Replace `/absolute/path/to/mcp-servers` with this repository path and
-`/absolute/path/to/ah.env` with the actual path to your `.env` file. The
-template in [`mcp.json.example`](./mcp.json.example) shows the same shape.
+### MCP Server Configuration
+
+You will need to create a YAML file containing the `audithub-mcp` server
+creation and ensure that the agent configuration calls `audithub-mcp` with the
+`--config <path>` argument.
+
+If you are not sure where to put the config file, a good default location is in
+`~/.config/audithub-mcp/config.yaml`.
+The file permissions should be set to `400` (owner read-only) since it contains
+credentials.
+
+See the [config docs](./docs/configuration.md) for details on how to create the
+configuration file.
 
 ## Available MCP Tools
 

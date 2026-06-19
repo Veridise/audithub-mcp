@@ -4,16 +4,16 @@
 
 `audithub-mcp` can be configured in three ways:
 
-1. Environment variables only.
-   - Set the required `AUDITHUB_*` credential environment variables and the
-     `AH_ALLOWED_*` environment variables in the shell environment before
-     starting the server.
+1. Config file only (**Recommended**).
+   - Pass `--config <path> --no-env-config` to load settings from the file without applying
+     environment overrides.
 2. Config file plus environment overrides.
    - Pass `--config <path>` to load settings from a JSON or YAML file first.
    - By default, environment variables still override values from the file.
-3. Config file only.
-   - Pass `--config <path> --no-env-config` to load settings from the file without applying
-     environment overrides.
+3. Environment variables only (**Deprecated due to security risks, prefer config files**).
+   - Set the required `AUDITHUB_*` credential environment variables and the
+     `AH_ALLOWED_*` environment variables in the shell environment before
+     starting the server.
 
 CLI flags can also override the allowlist and feature toggles after the base settings are loaded:
 
@@ -65,7 +65,11 @@ and projects that the MCP server provides access to.
     - Environment format: comma-separated positive integers, for example `10,20`.
   - Can also be overridden on the command-line using `--allowed-project-ids id1,id2,...`
 
-### Optional
+### Optional Capabilities
+
+By default, the MCP server only exposes tools for read-only functionality.
+You must explicitly opt-in to state-changing / destruction tools by setting the
+appropriate `capabilities` options.
 
 - `capabilities` (object)
   - Optional feature toggles for state-changing features.
