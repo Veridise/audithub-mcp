@@ -107,13 +107,10 @@ configuration file.
 
 | Tool | Description |
 |---|---|
-| `get_my_organizations` | List all AuditHub organizations the authenticated user belongs to |
-| `get_organization_name_index` | List allowlisted organizations as deterministic name-to-ID lookup entries |
+| `get_organizations` | List allowlisted organizations; pass `details=true` for full organization records and `filter_id` to narrow results |
 | `get_defi_vanguard_detectors` | List all DeFi Vanguard detectors for an organization using the Vanguard listing block format |
-| `get_project` | Get details for a specific project |
-| `get_project_name_index` | List allowlisted projects in an organization as deterministic name-to-ID lookup entries |
-| `get_latest_version` | Get the latest version of a project |
-| `get_version_name_index` | List project versions as deterministic name-to-ID lookup entries |
+| `get_projects` | List allowlisted projects in an organization; pass `details=true` for full project records and `filter_id` to narrow results |
+| `get_versions` | List versions for a project; pass `details=true` for full version records, `filter_id` to narrow results, and `latest_only=true` for the latest version only |
 | `get_task_info` | Get status and details for an AuditHub task |
 | `get_task_artifacts` | List sanitized artifact metadata for an AuditHub task |
 | `get_task_artifact` | Fetch a task artifact by ID as base64-encoded content |
@@ -132,14 +129,11 @@ configuration file.
 | `create_version_from_file` | Create a project version by uploading a local `.zip` archive; registered only when version creation is explicitly enabled |
 | `create_version_from_url` | Create a project version from a git repository or archive URL; registered only when version creation is explicitly enabled |
 
-All tools return typed Python objects backed by `audithub-sdk` models. On
-error, tools raise `RuntimeError` with a sanitized plain-text message; the MCP
-protocol surfaces this as an error response to the caller.
+All tools return typed Python objects backed by `audithub-sdk` models.
 
-The name index tools only expose organizations and projects that already pass
-the configured allowlists. Version name lookup requires an allowlisted
-organization and project. These tools help callers resolve stable human-readable
-names to internal AuditHub IDs before invoking the existing ID-based tools.
+The objects returned by `get_organizations`, `get_projects`, and `get_versions`
+only exposes items belonging to organizations/projects on the configured
+allowlists.
 
 ## Security Model
 

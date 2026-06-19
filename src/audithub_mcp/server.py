@@ -80,9 +80,9 @@ from audithub_mcp.models import (
     OrCaTaskInput,
     OrCaVersionHintReference,
     OrCaVersionSpecReference,
-    OrganizationNameIndexEntry,
+    OrganizationLookupItem,
     Project,
-    ProjectNameIndexEntry,
+    ProjectLookupItem,
     Task,
     TaskArtifact,
     TaskArtifactContent,
@@ -93,7 +93,7 @@ from audithub_mcp.models import (
     VersionCreation,
     VersionFromFileInput,
     VersionFromUrlInput,
-    VersionNameIndexEntry,
+    VersionLookupItem,
     WaitForTaskCompletionResult,
     _PositiveId,
 )
@@ -411,7 +411,7 @@ def _assert_org_allowed(organization_id: int) -> None:
     if organization_id not in _allowed_org_ids:
         raise RuntimeError(
             f"Organization ID {organization_id} is not in the configured allowlist. "
-            "Call get_my_organizations to find the IDs you have access to."
+            "Call get_organizations to find the IDs you have access to."
         )
 
 
@@ -420,7 +420,7 @@ def _assert_project_allowed(project_id: int) -> None:
     if project_id not in _allowed_project_ids:
         raise RuntimeError(
             f"Project ID {project_id} is not in the configured allowlist. "
-            "Use get_project after finding a valid organization ID."
+            "Use get_projects after finding a valid organization ID."
         )
 
 
@@ -558,40 +558,45 @@ async def _run_tool[T](
 
 
 @mcp.tool()
-async def get_my_organizations() -> list[MyOrganization]:
-    """List details of all AuditHub organizations."""
+async def get_organizations(
+    filter_id: Annotated[
+        _AhId | None,
+        Field(description="Filter to only the given organization ID."),
+    ] = None,
+    details: Annotated[
+        bool,
+        Field(description="Return full organization information in a details field"),
+    ] = False,
+) -> list[OrganizationLookupItem]:
+    """List allowlisted AuditHub organizations."""
 
-    async def _run() -> list[MyOrganization]:
+    async def _run() -> list[OrganizationLookupItem]:
+        if filter_id is not None:
+            _assert_org_allowed(filter_id)
+
         organizations = await _with_api_client(
             lambda client: UsersApi(client).get_organizations_users_myorganizations_get()
         )
         orgs = _org_ta.validate_python(organizations)
-        return [org for org in orgs if org.id in _allowed_org_ids]
-
-    return await _run_tool(_run, tool_name="get_my_organizations", safe_args={})
-
-
-@mcp.tool()
-async def get_organization_name_index() -> list[OrganizationNameIndexEntry]:
-    """List AuditHub organizations as name and organization id entries."""
-
-    async def _run() -> list[OrganizationNameIndexEntry]:
-        organizations = await _with_api_client(
-            lambda client: UsersApi(client).get_organizations_users_myorganizations_get()
-        )
-        orgs = _org_ta.validate_python(organizations)
-        entries = [
-            OrganizationNameIndexEntry(
+        if filter_id is not None:
+            orgs = [org for org in orgs if org.id == filter_id]
+        orgs = [org for org in orgs if org.id in _allowed_org_ids]
+        orgs = sorted(orgs, key=lambda org: (_normalize_sort_key(org.name), org.id))
+        return [
+            OrganizationLookupItem.model_construct(
                 id=org.id,
                 name=org.name,
                 sort_key=_normalize_sort_key(org.name),
+                details=org if details else None,
             )
             for org in orgs
-            if org.id in _allowed_org_ids
         ]
-        return sorted(entries, key=lambda entry: (entry.sort_key, entry.id))
 
-    return await _run_tool(_run, tool_name="get_organization_name_index", safe_args={})
+    return await _run_tool(
+        _run,
+        tool_name="get_organizations",
+        safe_args={"filter_id": filter_id},
+    )
 
 
 @mcp.tool()
@@ -632,80 +637,79 @@ async def get_defi_vanguard_detectors(organization_id: _AhId) -> list[str]:
 
 
 @mcp.tool()
-async def get_project(organization_id: _AhId, project_id: _AhId) -> Project:
-    """Get details for a specific AuditHub project."""
+async def get_projects(
+    organization_id: _AhId,
+    filter_id: Annotated[
+        _AhId | None,
+        Field(description="Filter to only the given project ID"),
+    ] = None,
+    details: Annotated[
+        bool,
+        Field(description="Return full project information in a details field"),
+    ] = False,
+) -> list[ProjectLookupItem]:
+    """List allowlisted AuditHub projects for an organization."""
 
-    async def _run() -> Project:
+    async def _run() -> list[ProjectLookupItem]:
         _assert_org_allowed(organization_id)
-        _assert_project_allowed(project_id)
-        project = await _with_api_client(
+        if filter_id is not None:
+            _assert_project_allowed(filter_id)
+
+        projects = await _with_api_client(
             lambda client: ProjectsApi(
                 client
-            ).get_project_organizations_organization_id_projects_project_id_get(  # noqa: E501
+            ).get_projects_organizations_organization_id_projects_get(
                 organization_id=organization_id,
-                project_id=project_id,
             )
         )
-        return Project.model_validate(project)
+        project_list = _project_ta.validate_python(projects)
+        if filter_id is not None:
+            project_list = [project for project in project_list if project.id == filter_id]
+        project_list = [project for project in project_list if project.id in _allowed_project_ids]
+        project_list = sorted(
+            project_list, key=lambda project: (_normalize_sort_key(project.name), project.id)
+        )
+        return [
+            ProjectLookupItem.model_construct(
+                id=project.id,
+                name=project.name,
+                sort_key=_normalize_sort_key(project.name),
+                details=project if details else None,
+            )
+            for project in project_list
+        ]
 
     return await _run_tool(
         _run,
-        tool_name="get_project",
-        safe_args={"organization_id": organization_id, "project_id": project_id},
+        tool_name="get_projects",
+        safe_args={"organization_id": organization_id, "filter_id": filter_id},
     )
 
 
 @mcp.tool()
-async def get_project_name_index(organization_id: _AhId) -> list[ProjectNameIndexEntry]:
-    """List projects in an organization as name and project id entries."""
+async def get_versions(
+    organization_id: _AhId,
+    project_id: _AhId,
+    filter_id: Annotated[
+        _AhId | None,
+        Field(description="Filter to only the given version ID"),
+    ] = None,
+    details: Annotated[
+        bool,
+        Field(description="Return full organization information in a details field"),
+    ] = False,
+    latest_only: Annotated[
+        bool,
+        Field(description="Filter to the latest version of the project"),
+    ] = False,
+) -> list[VersionLookupItem]:
+    """List AuditHub versions for a project."""
 
-    async def _run() -> list[ProjectNameIndexEntry]:
-        _assert_org_allowed(organization_id)
-
-        async def _fetch_project(project_id: int) -> Project:
-            project = await _with_api_client(
-                lambda client: ProjectsApi(
-                    client
-                ).get_project_organizations_organization_id_projects_project_id_get(  # noqa: E501
-                    organization_id=organization_id,
-                    project_id=project_id,
-                )
-            )
-            return Project.model_validate(project)
-
-        entries: list[ProjectNameIndexEntry] = []
-        for project_id in sorted(_allowed_project_ids):
-            try:
-                validated_project = await _fetch_project(project_id)
-            except Exception as exc:
-                status = getattr(exc, "status", None)
-                if isinstance(status, int) and status == 404:
-                    continue
-                raise
-            entries.append(
-                ProjectNameIndexEntry(
-                    id=validated_project.id,
-                    name=validated_project.name,
-                    sort_key=_normalize_sort_key(validated_project.name),
-                )
-            )
-        return sorted(entries, key=lambda entry: (entry.sort_key, entry.id))
-
-    return await _run_tool(
-        _run,
-        tool_name="get_project_name_index",
-        safe_args={"organization_id": organization_id},
-    )
-
-
-@mcp.tool()
-async def get_latest_version(organization_id: _AhId, project_id: _AhId) -> Version:
-    """Get the latest version details of an AuditHub project."""
-
-    async def _run() -> Version:
+    async def _run() -> list[VersionLookupItem]:
         _assert_org_allowed(organization_id)
         _assert_project_allowed(project_id)
-        version = await _with_api_client(
+
+        latest_version = await _with_api_client(
             lambda client: VersionsApi(
                 client
             ).get_latest_version_organizations_organization_id_projects_project_id_versions_latest_get(  # noqa: E501
@@ -713,46 +717,56 @@ async def get_latest_version(organization_id: _AhId, project_id: _AhId) -> Versi
                 project_id=project_id,
             )
         )
-        return Version.model_validate(version)
+        latest_version_model = Version.model_validate(latest_version)
+        latest_version_id = latest_version_model.id
+        if latest_only:
+            if filter_id is not None and filter_id != latest_version_id:
+                return []
+            return [
+                VersionLookupItem.model_construct(
+                    id=latest_version_model.id,
+                    name=latest_version_model.name,
+                    sort_key=_normalize_sort_key(latest_version_model.name),
+                    latest=True,
+                    details=latest_version_model if details else None,
+                )
+            ]
 
-    return await _run_tool(
-        _run,
-        tool_name="get_latest_version",
-        safe_args={"organization_id": organization_id, "project_id": project_id},
-    )
-
-
-@mcp.tool()
-async def get_version_name_index(
-    organization_id: _AhId, project_id: _AhId
-) -> list[VersionNameIndexEntry]:
-    """List project versions as name and version id entries."""
-
-    async def _run() -> list[VersionNameIndexEntry]:
-        _assert_org_allowed(organization_id)
-        _assert_project_allowed(project_id)
         versions = await _with_api_client(
             lambda client: VersionsApi(
                 client
-            ).get_versions_organizations_organization_id_projects_project_id_versions_get(  # noqa: E501
+            ).get_versions_organizations_organization_id_projects_project_id_versions_get(
                 organization_id=organization_id,
                 project_id=project_id,
             )
         )
-        entries = [
-            VersionNameIndexEntry(
+        version_list = _version_ta.validate_python(versions)
+        if filter_id is not None:
+            version_list = [version for version in version_list if version.id == filter_id]
+        version_list = sorted(
+            version_list, key=lambda version: (_normalize_sort_key(version.name), version.id)
+        )
+        latest_version_id_set = latest_version_id
+        return [
+            VersionLookupItem.model_construct(
                 id=version.id,
                 name=version.name,
                 sort_key=_normalize_sort_key(version.name),
+                latest=version.id == latest_version_id_set,
+                details=version if details else None,
             )
-            for version in _version_ta.validate_python(versions)
+            for version in version_list
         ]
-        return sorted(entries, key=lambda entry: (entry.sort_key, entry.id))
 
     return await _run_tool(
         _run,
-        tool_name="get_version_name_index",
-        safe_args={"organization_id": organization_id, "project_id": project_id},
+        tool_name="get_versions",
+        safe_args={
+            "organization_id": organization_id,
+            "project_id": project_id,
+            "filter_id": filter_id,
+            "latest_only": latest_only,
+        },
     )
 
 

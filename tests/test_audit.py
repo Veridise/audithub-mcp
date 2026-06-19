@@ -14,13 +14,13 @@ class TestLogCallStart(unittest.TestCase):
 
     def test_tool_name_in_log(self) -> None:
         with patch.object(audit.logger, "info") as mock_info:
-            audit.log_call_start("get_project", {"organization_id": 1, "project_id": 10})
+            audit.log_call_start("get_projects", {"organization_id": 1, "project_id": 10})
         call_str = str(mock_info.call_args)
-        self.assertIn("get_project", call_str)
+        self.assertIn("get_projects", call_str)
 
     def test_safe_args_in_log(self) -> None:
         with patch.object(audit.logger, "info") as mock_info:
-            audit.log_call_start("get_project", {"organization_id": 84, "project_id": 275})
+            audit.log_call_start("get_projects", {"organization_id": 84, "project_id": 275})
         # The formatted arg_str should contain the key=value pairs
         format_str, tool_name, arg_str = mock_info.call_args.args
         self.assertIn("84", arg_str)
@@ -30,10 +30,10 @@ class TestLogCallStart(unittest.TestCase):
     def test_empty_args_no_error(self) -> None:
         """Empty safe_args must not raise and should not produce malformed output."""
         with patch.object(audit.logger, "info") as mock_info:
-            audit.log_call_start("get_my_organizations", {})
+            audit.log_call_start("get_organizations", {})
         mock_info.assert_called_once()
         _, tool_name, arg_str = mock_info.call_args.args
-        self.assertEqual(tool_name, "get_my_organizations")
+        self.assertEqual(tool_name, "get_organizations")
         self.assertEqual(arg_str, "")  # empty — no trailing garbage
 
     def test_none_value_in_args(self) -> None:
@@ -44,7 +44,7 @@ class TestLogCallStart(unittest.TestCase):
 
     def test_log_level_is_info(self) -> None:
         with self.assertLogs("audithub_mcp.audit", level=logging.INFO) as ctx:
-            audit.log_call_start("get_project", {"organization_id": 1})
+            audit.log_call_start("get_projects", {"organization_id": 1})
         self.assertTrue(any("INFO" in r for r in ctx.output))
 
 
@@ -53,26 +53,26 @@ class TestLogCallSuccess(unittest.TestCase):
 
     def test_status_ok_in_log(self) -> None:
         with patch.object(audit.logger, "info") as mock_info:
-            audit.log_call_success("get_project", 42.5)
+            audit.log_call_success("get_projects", 42.5)
         call_str = str(mock_info.call_args)
         self.assertIn("status=ok", call_str)
 
     def test_elapsed_ms_in_log(self) -> None:
         with patch.object(audit.logger, "info") as mock_info:
-            audit.log_call_success("get_project", 123.456)
+            audit.log_call_success("get_projects", 123.456)
         # Logging passes args lazily; check the positional args to the call
         pos_args = mock_info.call_args.args
         self.assertIn(123.456, pos_args)
 
     def test_tool_name_in_log(self) -> None:
         with patch.object(audit.logger, "info") as mock_info:
-            audit.log_call_success("get_latest_version", 0.1)
+            audit.log_call_success("get_versions", 0.1)
         call_str = str(mock_info.call_args)
-        self.assertIn("get_latest_version", call_str)
+        self.assertIn("get_versions", call_str)
 
     def test_log_level_is_info(self) -> None:
         with self.assertLogs("audithub_mcp.audit", level=logging.INFO) as ctx:
-            audit.log_call_success("get_project", 10.0)
+            audit.log_call_success("get_projects", 10.0)
         self.assertTrue(any("INFO" in r for r in ctx.output))
 
 
@@ -81,7 +81,7 @@ class TestLogCallError(unittest.TestCase):
 
     def test_status_error_in_log(self) -> None:
         with patch.object(audit.logger, "error") as mock_err:
-            audit.log_call_error("get_project", "something failed", 99.9)
+            audit.log_call_error("get_projects", "something failed", 99.9)
         call_str = str(mock_err.call_args)
         self.assertIn("status=error", call_str)
 
@@ -93,7 +93,7 @@ class TestLogCallError(unittest.TestCase):
 
     def test_elapsed_ms_in_log(self) -> None:
         with patch.object(audit.logger, "error") as mock_err:
-            audit.log_call_error("get_project", "err", 77.7)
+            audit.log_call_error("get_projects", "err", 77.7)
         call_str = str(mock_err.call_args)
         self.assertIn("77.7", call_str)
 
@@ -123,7 +123,7 @@ class TestLogCallError(unittest.TestCase):
 
     def test_log_level_is_error(self) -> None:
         with self.assertLogs("audithub_mcp.audit", level=logging.ERROR) as ctx:
-            audit.log_call_error("get_project", "failed", 1.0)
+            audit.log_call_error("get_projects", "failed", 1.0)
         self.assertTrue(any("ERROR" in r for r in ctx.output))
 
     def test_empty_message(self) -> None:

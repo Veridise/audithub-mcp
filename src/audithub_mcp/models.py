@@ -17,34 +17,38 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 _PositiveId = Annotated[int, Field(strict=True, gt=0)]
 
 
-class OrganizationNameIndexEntry(BaseModel):
-    """Name lookup entry for an allowlisted AuditHub organization."""
+class OrganizationLookupItem(BaseModel):
+    """Lookup entry for an allowlisted AuditHub organization."""
 
     model_config = ConfigDict(frozen=True)
 
     id: int
     name: str
     sort_key: str
+    details: MyOrganization | None = None
 
 
-class ProjectNameIndexEntry(BaseModel):
-    """Name lookup entry for an allowlisted AuditHub project."""
-
-    model_config = ConfigDict(frozen=True)
-
-    id: int
-    name: str
-    sort_key: str
-
-
-class VersionNameIndexEntry(BaseModel):
-    """Name lookup entry for an allowlisted AuditHub version."""
+class ProjectLookupItem(BaseModel):
+    """Lookup entry for an allowlisted AuditHub project."""
 
     model_config = ConfigDict(frozen=True)
 
     id: int
     name: str
     sort_key: str
+    details: Project | None = None
+
+
+class VersionLookupItem(BaseModel):
+    """Lookup entry for an allowlisted AuditHub version."""
+
+    model_config = ConfigDict(frozen=True)
+
+    id: int
+    name: str
+    sort_key: str
+    latest: bool
+    details: Version | None = None
 
 
 class VersionFromUrlInput(BaseModel):
@@ -420,6 +424,7 @@ __all__ = [
     "IssueDetails",
     "IssueForList",
     "MyOrganization",
+    "OrganizationLookupItem",
     "OrCaAdHocHintReference",
     "OrCaAdHocSpecReference",
     "OrCaFuzzingBlacklistEntry",
@@ -433,9 +438,8 @@ __all__ = [
     "OrCaTaskInput",
     "OrCaVersionHintReference",
     "OrCaVersionSpecReference",
-    "OrganizationNameIndexEntry",
     "Project",
-    "ProjectNameIndexEntry",
+    "ProjectLookupItem",
     "Task",
     "TaskArtifact",
     "TaskArtifactContent",
@@ -444,8 +448,8 @@ __all__ = [
     "TaskLogsWriteResult",
     "Thread",
     "Version",
+    "VersionLookupItem",
     "VersionCreation",
     "VersionFromFileInput",
     "VersionFromUrlInput",
-    "VersionNameIndexEntry",
 ]

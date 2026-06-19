@@ -58,13 +58,13 @@ class TestDisallowedIds(unittest.IsolatedAsyncioTestCase):
 
     async def test_get_project_disallowed_org(self) -> None:
         with self.assertRaises(RuntimeError) as cm:
-            await server.get_project(organization_id=999, project_id=10)
+            await server.get_projects(organization_id=999, filter_id=10)
         self.assertIn("999", str(cm.exception))
         self.assertNotIn("frozenset", str(cm.exception))
 
-    async def test_get_project_disallowed_project(self) -> None:
+    async def test_get_projects_disallowed_project(self) -> None:
         with self.assertRaises(RuntimeError) as cm:
-            await server.get_project(organization_id=1, project_id=999)
+            await server.get_projects(organization_id=1, filter_id=999)
         self.assertIn("999", str(cm.exception))
 
     async def test_rejected_call_does_not_reach_sdk(self) -> None:
@@ -72,12 +72,12 @@ class TestDisallowedIds(unittest.IsolatedAsyncioTestCase):
         with (
             patch.object(
                 server.ProjectsApi,
-                "get_project_organizations_organization_id_projects_project_id_get",
+                "get_projects_organizations_organization_id_projects_get",
                 mock,
             ),
             self.assertRaises(RuntimeError),
         ):
-            await server.get_project(organization_id=999, project_id=10)
+            await server.get_projects(organization_id=999)
         mock.assert_not_awaited()
 
     async def test_task_findings_disallowed_org(self) -> None:
@@ -228,36 +228,36 @@ class TestDisallowedIds(unittest.IsolatedAsyncioTestCase):
 
     async def test_project_name_index_disallowed_org(self) -> None:
         with self.assertRaises(RuntimeError) as cm:
-            await server.get_project_name_index(organization_id=999)
+            await server.get_projects(organization_id=999)
         self.assertIn("999", str(cm.exception))
         self.assertNotIn("frozenset", str(cm.exception))
 
-    async def test_project_name_index_rejected_call_does_not_reach_sdk(self) -> None:
+    async def test_get_projects_rejected_call_does_not_reach_sdk(self) -> None:
         mock = AsyncMock(return_value=[{"id": 10, "name": "Audit"}])
         with (
             patch.object(
                 server.ProjectsApi,
-                "get_project_organizations_organization_id_projects_project_id_get",
+                "get_projects_organizations_organization_id_projects_get",
                 mock,
             ),
             self.assertRaises(RuntimeError),
         ):
-            await server.get_project_name_index(organization_id=999)
+            await server.get_projects(organization_id=999)
         mock.assert_not_awaited()
 
-    async def test_version_name_index_disallowed_org(self) -> None:
+    async def test_versions_disallowed_org(self) -> None:
         with self.assertRaises(RuntimeError) as cm:
-            await server.get_version_name_index(organization_id=999, project_id=10)
+            await server.get_versions(organization_id=999, project_id=10)
         self.assertIn("999", str(cm.exception))
         self.assertNotIn("frozenset", str(cm.exception))
 
-    async def test_version_name_index_disallowed_project(self) -> None:
+    async def test_versions_disallowed_project(self) -> None:
         with self.assertRaises(RuntimeError) as cm:
-            await server.get_version_name_index(organization_id=1, project_id=999)
+            await server.get_versions(organization_id=1, project_id=999)
         self.assertIn("999", str(cm.exception))
         self.assertNotIn("frozenset", str(cm.exception))
 
-    async def test_version_name_index_rejected_call_does_not_reach_sdk(self) -> None:
+    async def test_get_versions_rejected_call_does_not_reach_sdk(self) -> None:
         mock = AsyncMock(return_value=[{"id": 42, "name": "v1.0"}])
         with (
             patch.object(
@@ -267,7 +267,7 @@ class TestDisallowedIds(unittest.IsolatedAsyncioTestCase):
             ),
             self.assertRaises(RuntimeError),
         ):
-            await server.get_version_name_index(organization_id=999, project_id=10)
+            await server.get_versions(organization_id=999, project_id=10)
         mock.assert_not_awaited()
 
     async def test_run_orca_disallowed_org_rejected_before_sdk_call(self) -> None:

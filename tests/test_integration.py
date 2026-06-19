@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import os
+from collections.abc import Coroutine
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -44,11 +46,12 @@ from audithub_mcp.models import (  # noqa: E402
     Comment,
     IssueDetails,
     IssueForList,
-    MyOrganization,
+    OrganizationLookupItem,
     Project,
+    ProjectLookupItem,
     Thread,
     Version,
-    VersionNameIndexEntry,
+    VersionLookupItem,
 )
 
 pytestmark = pytest.mark.integration
@@ -57,7 +60,7 @@ _ORG_ID = int(os.environ.get("AH_TEST_ORG_ID", "84"))
 _PROJECT_ID = int(os.environ.get("AH_TEST_PROJECT_ID", "275"))
 
 
-def _run(coro):
+def _run[T](coro: Coroutine[Any, Any, T]) -> T:
     return asyncio.run(coro)
 
 
@@ -74,27 +77,49 @@ def teardown_module() -> None:
 
 
 def test_list_organizations() -> None:
-    orgs = _run(server.get_my_organizations())
+    orgs = _run(server.get_organizations())
     assert isinstance(orgs, list)
-    assert all(isinstance(org, MyOrganization) for org in orgs)
+    assert all(isinstance(org, OrganizationLookupItem) for org in orgs)
+    assert all(org.details is None for org in orgs)
 
 
-def test_get_project() -> None:
-    project = _run(server.get_project(organization_id=_ORG_ID, project_id=_PROJECT_ID))
-    assert isinstance(project, Project)
-    assert project.id == _PROJECT_ID
+def test_get_projects() -> None:
+    projects = _run(server.get_projects(organization_id=_ORG_ID, filter_id=_PROJECT_ID))
+    assert isinstance(projects, list)
+    assert all(isinstance(project, ProjectLookupItem) for project in projects)
+    assert all(project.details is None for project in projects)
+    assert [project.id for project in projects] == [_PROJECT_ID]
 
 
-def test_get_latest_version() -> None:
-    version = _run(server.get_latest_version(organization_id=_ORG_ID, project_id=_PROJECT_ID))
-    assert isinstance(version, Version)
-    assert version.id > 0
+def test_get_projects_details() -> None:
+    projects = _run(
+        server.get_projects(organization_id=_ORG_ID, filter_id=_PROJECT_ID, details=True)
+    )
+    assert isinstance(projects, list)
+    assert all(isinstance(project, ProjectLookupItem) for project in projects)
+    assert all(isinstance(project.details, Project) for project in projects)
+    assert [project.id for project in projects] == [_PROJECT_ID]
 
 
-def test_list_version_name_index() -> None:
-    entries = _run(server.get_version_name_index(organization_id=_ORG_ID, project_id=_PROJECT_ID))
-    assert isinstance(entries, list)
-    assert all(isinstance(entry, VersionNameIndexEntry) for entry in entries)
+def test_get_versions() -> None:
+    versions = _run(server.get_versions(organization_id=_ORG_ID, project_id=_PROJECT_ID))
+    assert isinstance(versions, list)
+    assert all(isinstance(version, VersionLookupItem) for version in versions)
+    assert all(version.details is None for version in versions)
+    assert all(isinstance(version.latest, bool) for version in versions)
+    assert any(version.latest for version in versions)
+
+
+def test_get_versions_details() -> None:
+    versions = _run(
+        server.get_versions(organization_id=_ORG_ID, project_id=_PROJECT_ID, details=True)
+    )
+    assert isinstance(versions, list)
+    assert all(isinstance(version, VersionLookupItem) for version in versions)
+    assert all(isinstance(version.details, Version) for version in versions)
+    assert all(version.id > 0 for version in versions)
+    assert all(isinstance(version.latest, bool) for version in versions)
+    assert any(version.latest for version in versions)
 
 
 def test_list_vanguard_detectors() -> None:
@@ -138,10 +163,13 @@ def test_list_project_comments() -> None:
 
 
 def test_list_version_threads() -> None:
-    version = _run(server.get_latest_version(organization_id=_ORG_ID, project_id=_PROJECT_ID))
+    versions = _run(server.get_versions(organization_id=_ORG_ID, project_id=_PROJECT_ID))
+    if not versions:
+        pytest.skip("No versions found in project — cannot test get_version_comment_threads")
+    version_id = versions[0].id
     threads = _run(
         server.get_version_comment_threads(
-            organization_id=_ORG_ID, project_id=_PROJECT_ID, version_id=version.id, limit=10
+            organization_id=_ORG_ID, project_id=_PROJECT_ID, version_id=version_id, limit=10
         )
     )
     assert isinstance(threads, list)
@@ -149,10 +177,13 @@ def test_list_version_threads() -> None:
 
 
 def test_get_thread_comments_if_thread_present() -> None:
-    version = _run(server.get_latest_version(organization_id=_ORG_ID, project_id=_PROJECT_ID))
+    versions = _run(server.get_versions(organization_id=_ORG_ID, project_id=_PROJECT_ID))
+    if not versions:
+        pytest.skip("No versions found in project — cannot test get_thread_comments")
+    version_id = versions[0].id
     threads = _run(
         server.get_version_comment_threads(
-            organization_id=_ORG_ID, project_id=_PROJECT_ID, version_id=version.id, limit=10
+            organization_id=_ORG_ID, project_id=_PROJECT_ID, version_id=version_id, limit=10
         )
     )
     if not threads:
@@ -162,7 +193,7 @@ def test_get_thread_comments_if_thread_present() -> None:
         server.get_thread_comments(
             organization_id=_ORG_ID,
             project_id=_PROJECT_ID,
-            version_id=version.id,
+            version_id=version_id,
             thread_id=threads[0].id,
             limit=10,
         )

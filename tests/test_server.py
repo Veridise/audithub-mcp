@@ -30,24 +30,18 @@ from audithub_mcp.models import (  # noqa: E402
     DefiVanguardV2TaskInput,
     IssueDetails,
     IssueForList,
-    MyOrganization,
     OrCaFuzzingBlacklistEntry,
     OrCaParametersInput,
     OrCaTaskInput,
     OrCaVersionSpecReference,
-    OrganizationNameIndexEntry,
-    Project,
-    ProjectNameIndexEntry,
     Task,
     TaskArtifact,
     TaskArtifactContent,
     TaskCreation,
     Thread,
-    Version,
     VersionCreation,
     VersionFromFileInput,
     VersionFromUrlInput,
-    VersionNameIndexEntry,
     WaitForTaskCompletionResult,
 )
 from tests.sdk_stubs import make_public_configuration, make_vanguard_detector
@@ -704,17 +698,7 @@ class TestToolCalls(unittest.IsolatedAsyncioTestCase):
         server._set_version_creation_enabled(False)
         server._set_edit_custom_detectors_enabled(False)
 
-    async def test_get_my_organizations_filters_allowlist(self) -> None:
-        with patch.object(
-            server.UsersApi,
-            "get_organizations_users_myorganizations_get",
-            AsyncMock(return_value=[_ORG_DICT, {**_ORG_DICT, "id": 99, "name": "Other"}]),
-        ):
-            result = await server.get_my_organizations()
-        self.assertEqual([org.id for org in result], [1])
-        self.assertIsInstance(result[0], MyOrganization)
-
-    async def test_get_organization_name_index_filters_and_sorts(self) -> None:
+    async def test_get_organizations_filters_allowlist_and_sorts(self) -> None:
         with patch.object(
             server.UsersApi,
             "get_organizations_users_myorganizations_get",
@@ -725,79 +709,153 @@ class TestToolCalls(unittest.IsolatedAsyncioTestCase):
                     {**_ORG_DICT, "id": 99, "name": "Other"},
                 ]
             ),
-        ):
+        ) as mock:
             server._allowed_org_ids = frozenset({1, 2})
-            result = await server.get_organization_name_index()
+            result = await server.get_organizations()
         self.assertEqual([item.id for item in result], [2, 1])
         self.assertEqual([item.sort_key for item in result], ["alpha", "zebra"])
-        self.assertTrue(all(isinstance(item, OrganizationNameIndexEntry) for item in result))
+        self.assertEqual(mock.await_args_list[0].kwargs, {})
 
-    async def test_get_project_returns_project(self) -> None:
+    async def test_get_organizations_details_return_superset_entries(self) -> None:
+        with patch.object(
+            server.UsersApi,
+            "get_organizations_users_myorganizations_get",
+            AsyncMock(return_value=[{**_ORG_DICT, "name": " Alpha "}]),
+        ):
+            result = await server.get_organizations(details=True)
+        self.assertEqual(result[0].sort_key, "alpha")
+        self.assertTrue(result[0].details.gh_connected)
+
+    async def test_get_organizations_filter_id_is_client_side_when_sdk_lacks_support(self) -> None:
+        mock = AsyncMock(
+            return_value=[
+                {**_ORG_DICT, "id": 1, "name": " Zebra "},
+                {**_ORG_DICT, "id": 2, "name": "alpha"},
+            ]
+        )
+        with patch.object(server.UsersApi, "get_organizations_users_myorganizations_get", mock):
+            server._allowed_org_ids = frozenset({1, 2})
+            result = await server.get_organizations(filter_id=2)
+        self.assertEqual([item.id for item in result], [2])
+        self.assertEqual(mock.await_args_list[0].kwargs, {})
+
+    async def test_get_projects_filters_allowlist_and_sorts(self) -> None:
         with patch.object(
             server.ProjectsApi,
-            "get_project_organizations_organization_id_projects_project_id_get",
-            AsyncMock(return_value=_PROJECT_DICT),
-        ):
-            result = await server.get_project(organization_id=1, project_id=10)
-        self.assertIsInstance(result, Project)
-        self.assertEqual(result.id, 10)
-
-    async def test_get_project_name_index_filters_and_sorts(self) -> None:
-        mock = AsyncMock(side_effect=[_PROJECT_DICT_TWO, _PROJECT_DICT])
-        with patch.object(
-            server.ProjectsApi,
-            "get_project_organizations_organization_id_projects_project_id_get",
-            mock,
-        ):
+            "get_projects_organizations_organization_id_projects_get",
+            AsyncMock(return_value=[_PROJECT_DICT_THREE, _PROJECT_DICT_TWO, _PROJECT_DICT]),
+        ) as mock:
             server._allowed_project_ids = frozenset({10, 20})
-            result = await server.get_project_name_index(organization_id=1)
+            result = await server.get_projects(organization_id=1)
         self.assertEqual([item.id for item in result], [10, 20])
         self.assertEqual([item.sort_key for item in result], ["audit", "zebra"])
-        self.assertTrue(all(isinstance(item, ProjectNameIndexEntry) for item in result))
-        self.assertEqual(
-            [call.kwargs for call in mock.await_args_list],
-            [
-                {"organization_id": 1, "project_id": 10},
-                {"organization_id": 1, "project_id": 20},
-            ],
-        )
+        self.assertEqual(mock.await_args_list[0].kwargs, {"organization_id": 1})
 
-    async def test_get_project_name_index_skips_404_projects(self) -> None:
-        class _NotFoundError(Exception):
-            status = 404
-
-        mock = AsyncMock(side_effect=[_PROJECT_DICT, _NotFoundError()])
+    async def test_get_projects_filter_id_and_details_are_independent(self) -> None:
         with patch.object(
             server.ProjectsApi,
-            "get_project_organizations_organization_id_projects_project_id_get",
-            mock,
-        ):
+            "get_projects_organizations_organization_id_projects_get",
+            AsyncMock(return_value=[_PROJECT_DICT_TWO, _PROJECT_DICT]),
+        ) as mock:
             server._allowed_project_ids = frozenset({10, 20})
-            result = await server.get_project_name_index(organization_id=1)
-        self.assertEqual([item.id for item in result], [10])
+            result = await server.get_projects(organization_id=1, filter_id=20, details=True)
+        self.assertEqual([item.id for item in result], [20])
+        self.assertEqual(result[0].sort_key, "zebra")
+        self.assertEqual(result[0].details.project_root, ".")
+        self.assertEqual(mock.await_args_list[0].kwargs, {"organization_id": 1})
 
-    async def test_get_latest_version_returns_version(self) -> None:
-        with patch.object(
-            server.VersionsApi,
-            "get_latest_version_organizations_organization_id_projects_project_id_versions_latest_get",  # noqa: E501
-            AsyncMock(return_value=_VERSION_DICT),
+    async def test_get_projects_rejects_disallowed_filter_id_before_sdk_call(self) -> None:
+        mock = AsyncMock(return_value=[_PROJECT_DICT])
+        with (
+            patch.object(
+                server.ProjectsApi,
+                "get_projects_organizations_organization_id_projects_get",
+                mock,
+            ),
+            self.assertRaises(RuntimeError),
         ):
-            result = await server.get_latest_version(organization_id=1, project_id=10)
-        self.assertIsInstance(result, Version)
+            await server.get_projects(organization_id=1, filter_id=99)
+        mock.assert_not_awaited()
 
-    async def test_get_version_name_index_filters_and_sorts(self) -> None:
-        with patch.object(
-            server.VersionsApi,
-            "get_versions_organizations_organization_id_projects_project_id_versions_get",
-            AsyncMock(return_value=[_VERSION_DICT_TWO, _VERSION_DICT, _VERSION_DICT_THREE]),
+    async def test_get_versions_filters_allowlist_and_sorts(self) -> None:
+        with (
+            patch.object(
+                server.VersionsApi,
+                "get_latest_version_organizations_organization_id_projects_project_id_versions_latest_get",  # noqa: E501
+                AsyncMock(return_value=_VERSION_DICT_TWO),
+            ),
+            patch.object(
+                server.VersionsApi,
+                "get_versions_organizations_organization_id_projects_project_id_versions_get",
+                AsyncMock(return_value=[_VERSION_DICT_TWO, _VERSION_DICT, _VERSION_DICT_THREE]),
+            ) as mock,
         ):
-            result = await server.get_version_name_index(organization_id=1, project_id=10)
+            result = await server.get_versions(organization_id=1, project_id=10)
         self.assertEqual([item.id for item in result], [44, 43, 42])
         self.assertEqual(
             [item.sort_key for item in result],
             ["alpha", "release candidate", "v1.0"],
         )
-        self.assertTrue(all(isinstance(item, VersionNameIndexEntry) for item in result))
+        self.assertEqual([item.latest for item in result], [False, True, False])
+        self.assertEqual(mock.await_args_list[0].kwargs, {"organization_id": 1, "project_id": 10})
+
+    async def test_get_versions_filter_id_and_details_are_independent(self) -> None:
+        with (
+            patch.object(
+                server.VersionsApi,
+                "get_latest_version_organizations_organization_id_projects_project_id_versions_latest_get",  # noqa: E501
+                AsyncMock(return_value=_VERSION_DICT_TWO),
+            ),
+            patch.object(
+                server.VersionsApi,
+                "get_versions_organizations_organization_id_projects_project_id_versions_get",
+                AsyncMock(return_value=[_VERSION_DICT_TWO, _VERSION_DICT]),
+            ) as mock,
+        ):
+            result = await server.get_versions(
+                organization_id=1,
+                project_id=10,
+                filter_id=43,
+                details=True,
+            )
+        self.assertEqual([item.id for item in result], [43])
+        self.assertEqual(result[0].sort_key, "release candidate")
+        self.assertEqual(result[0].details.project_revision_hash, "rev-42")
+        self.assertTrue(result[0].latest)
+        self.assertEqual(mock.await_args_list[0].kwargs, {"organization_id": 1, "project_id": 10})
+
+    async def test_get_versions_latest_only_returns_only_latest_version(self) -> None:
+        list_mock = AsyncMock(return_value=[_VERSION_DICT_TWO, _VERSION_DICT, _VERSION_DICT_THREE])
+        with (
+            patch.object(
+                server.VersionsApi,
+                "get_latest_version_organizations_organization_id_projects_project_id_versions_latest_get",  # noqa: E501
+                AsyncMock(return_value=_VERSION_DICT_TWO),
+            ),
+            patch.object(
+                server.VersionsApi,
+                "get_versions_organizations_organization_id_projects_project_id_versions_get",
+                list_mock,
+            ),
+        ):
+            result = await server.get_versions(organization_id=1, project_id=10, latest_only=True)
+        self.assertEqual([item.id for item in result], [43])
+        self.assertTrue(result[0].latest)
+        self.assertIsNone(result[0].details)
+        list_mock.assert_not_awaited()
+
+    async def test_get_versions_rejects_disallowed_org_before_sdk_call(self) -> None:
+        mock = AsyncMock(return_value=[_VERSION_DICT])
+        with (
+            patch.object(
+                server.VersionsApi,
+                "get_versions_organizations_organization_id_projects_project_id_versions_get",
+                mock,
+            ),
+            self.assertRaises(RuntimeError),
+        ):
+            await server.get_versions(organization_id=99, project_id=10)
+        mock.assert_not_awaited()
 
     async def test_get_task_info_returns_task(self) -> None:
         with patch.object(
@@ -1833,20 +1891,20 @@ class TestToolCalls(unittest.IsolatedAsyncioTestCase):
             await server.get_project_issues(organization_id=99, project_id=10)
         mock.assert_not_awaited()
 
-    async def test_get_project_name_index_rejection_prevents_sdk_call(self) -> None:
+    async def test_get_projects_rejection_prevents_sdk_call(self) -> None:
         mock = AsyncMock(return_value=[_PROJECT_DICT])
         with (
             patch.object(
                 server.ProjectsApi,
-                "get_project_organizations_organization_id_projects_project_id_get",
+                "get_projects_organizations_organization_id_projects_get",
                 mock,
             ),
             self.assertRaises(RuntimeError),
         ):
-            await server.get_project_name_index(organization_id=99)
+            await server.get_projects(organization_id=99)
         mock.assert_not_awaited()
 
-    async def test_get_version_name_index_rejection_prevents_sdk_call(self) -> None:
+    async def test_get_versions_rejection_prevents_sdk_call(self) -> None:
         mock = AsyncMock(return_value=[_VERSION_DICT])
         with (
             patch.object(
@@ -1856,7 +1914,7 @@ class TestToolCalls(unittest.IsolatedAsyncioTestCase):
             ),
             self.assertRaises(RuntimeError),
         ):
-            await server.get_version_name_index(organization_id=1, project_id=99)
+            await server.get_versions(organization_id=1, project_id=99)
         mock.assert_not_awaited()
 
     async def test_get_thread_comments_rejection_prevents_sdk_call(self) -> None:
@@ -1883,7 +1941,7 @@ class TestToolCalls(unittest.IsolatedAsyncioTestCase):
             ),
             self.assertRaises(RuntimeError) as cm,
         ):
-            await server.get_my_organizations()
+            await server.get_organizations()
         self.assertNotIn("network secret", str(cm.exception))
 
     def test_normalize_sort_key(self) -> None:
@@ -1906,9 +1964,7 @@ class TestFastMCPSchemaValidation(unittest.IsolatedAsyncioTestCase):
         from mcp.shared.exceptions import McpError
 
         with self.assertRaises((McpError, Exception)) as cm:
-            await server.mcp._tool_manager.call_tool(
-                "get_project", {"organization_id": "1", "project_id": 10}
-            )
+            await server.mcp._tool_manager.call_tool("get_projects", {"organization_id": "1"})
         self.assertIn("validation error", str(cm.exception).lower())
 
     async def test_string_thread_id_rejected(self) -> None:
