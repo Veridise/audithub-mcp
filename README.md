@@ -11,8 +11,7 @@ This repository contains the source code of `audithub-mcp`, an MCP server for
 By design, the MCP server limits the functionality to be read-only and non-destructive.
 Additional features can be enabled through the configuration file.
 
-> **Warning:** This server is currently under-developed and has not been tested.
-> Verify all tool outputs manually before acting on them.
+> **Warning:** LLMs can make mistakes. Verify all tool outputs manually before acting on them.
 
 ## Prerequisites
 
