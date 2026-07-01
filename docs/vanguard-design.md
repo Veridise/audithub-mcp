@@ -17,8 +17,14 @@ documentation:
 
 - `docs://vanguard/custom-detectors`
 
-The resource returns a JSON object with links to documentation pages for
-Vanguard custom detectors.
+The resource returns a JSON object mapping document titles to the markdown text
+of relevant documentation pages.
+
+Behavior:
+
+- The server downloads the markdown texts the first time the resource is read.
+- The downloaded text is cached in memory for the lifetime of the process.
+- If any of the fetches returns a non-OK HTTP response, the resource read fails.
 
 ## Catalog Flow
 

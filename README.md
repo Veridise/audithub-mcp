@@ -123,6 +123,7 @@ configuration file.
 | `get_project_issues` | Get all issues for a project |
 | `get_project_issue` | Get a specific issue from a project |
 | `get_project_comments` | Get all comments for a project across all versions |
+| `help_context` | Get a prompt/instructions on how agents should use the mcp server |
 | `run_orca_task` | Start an OrCa task for a project version; registered only when task runs are explicitly enabled |
 | `run_defi_vanguard_task` | Start a DeFi Vanguard task for a project version; registered only when task runs are explicitly enabled |
 | `create_version_from_file` | Create a project version by uploading a local `.zip` archive; registered only when version creation is explicitly enabled |
@@ -133,6 +134,12 @@ All tools return typed Python objects backed by `audithub-sdk` models.
 The objects returned by `get_organizations`, `get_projects`, and `get_versions`
 only exposes items belonging to organizations/projects on the configured
 allowlists.
+
+## Available MCP Resources
+
+| Resource | Description |
+|---|---|
+| `docs://vanguard/custom-detectors` | Vanguard custom-detector documentation resource; the server fetches the linked markdown files on first access, caches the rendered text in memory, and returns the markdown bodies |
 
 ## Security Model
 

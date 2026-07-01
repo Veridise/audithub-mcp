@@ -16,6 +16,7 @@ import inspect
 import json
 import sys
 import time
+import urllib.request
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -114,15 +115,16 @@ __all__ = [
     "audithub_sdk",
 ]
 
-mcp = FastMCP("audithub_mcp")
+mcp = FastMCP("audithub-mcp")
 mcp._mcp_server.experimental.enable_tasks()
 
 _VANGUARD_CUSTOM_DETECTOR_DOCS_RESOURCE_URI = "docs://vanguard/custom-detectors"
 _VANGUARD_CUSTOM_DETECTOR_DOCS = {
-    "Custom Detector Definition": "https://docs.audithub.dev/vanguard/custom-detectors/",
-    "PAQL Reference": "https://docs.audithub.dev/vanguard/custom-detectors/paql",
-    "Solidity PAQL Dialect": "https://docs.audithub.dev/vanguard/custom-detectors/solidity-dialect",
+    "Custom Detector Definition": "https://docs.audithub.dev/vanguard/custom-detectors/custom-detector-definition.md",
+    "PAQL Reference": "https://docs.audithub.dev/vanguard/custom-detectors/paql.md",
+    "Solidity PAQL Dialect": "https://docs.audithub.dev/vanguard/custom-detectors/solidity-dialect.md",
 }
+_VANGUARD_CUSTOM_DETECTOR_DOCS_CACHE: dict[str, str] | None = None
 
 
 _context: AuditHubSdkContext | None = None
@@ -240,6 +242,12 @@ def _set_edit_custom_detectors_enabled(enabled: bool) -> None:
     global _edit_custom_detectors_enabled
     _edit_custom_detectors_enabled = enabled
     _set_registered_tools_enabled(_CUSTOM_DETECTOR_UPLOAD_TOOLS, enabled)
+
+
+def _reset_vanguard_custom_detector_docs_cache() -> None:
+    """Clear the cached Vanguard custom detector documentation."""
+    global _VANGUARD_CUSTOM_DETECTOR_DOCS_CACHE
+    _VANGUARD_CUSTOM_DETECTOR_DOCS_CACHE = None
 
 
 def _assert_task_runs_enabled() -> None:
@@ -388,12 +396,21 @@ async def _list_tools() -> None:
     _VANGUARD_CUSTOM_DETECTOR_DOCS_RESOURCE_URI,
     name="vanguard_custom_detector_docs",
     title="Vanguard custom detector docs",
-    description="Links to AuditHub's PAQL and Solidity PAQL documentation.",
+    description="Markdown documentation for AuditHub custom detectors",
     mime_type="application/json",
 )
 def get_vanguard_custom_detector_docs() -> dict[str, str]:
-    """Return links to the AuditHub custom-detector documentation."""
-    return _VANGUARD_CUSTOM_DETECTOR_DOCS
+    """Return markdown documentation for AuditHub custom detectors."""
+    global _VANGUARD_CUSTOM_DETECTOR_DOCS_CACHE
+    if _VANGUARD_CUSTOM_DETECTOR_DOCS_CACHE is None:
+        downloaded_docs: dict[str, str] = {}
+        for title, url in _VANGUARD_CUSTOM_DETECTOR_DOCS.items():
+            with urllib.request.urlopen(url) as response:
+                downloaded_docs[title] = response.read().decode(
+                    response.headers.get_content_charset() or "utf-8"
+                )
+        _VANGUARD_CUSTOM_DETECTOR_DOCS_CACHE = downloaded_docs
+    return dict(_VANGUARD_CUSTOM_DETECTOR_DOCS_CACHE)
 
 
 def _ctx() -> AuditHubSdkContext:
@@ -597,6 +614,21 @@ async def get_organizations(
         tool_name="get_organizations",
         safe_args={"filter_id": filter_id},
     )
+
+
+@mcp.tool()
+async def help_context() -> str:
+    """Get resources related to using the audithub-mcp server."""
+
+    return """\
+For authoritative information on Vanguard custom detectors, read the markdown at the audithub-mcp
+resource: docs://vanguard/custom-detectors.
+
+To retrieve the findings of a Vanguard task, use the get_task_logs and parse_findings_from_task_log
+tools.
+Do not use get_task_artifact to download findings.
+Never read any findings.json file directly.
+"""
 
 
 @mcp.tool()
