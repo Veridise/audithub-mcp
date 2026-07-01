@@ -68,12 +68,14 @@ def setup_module() -> None:
     server._context = server._build_context()
     server._allowed_org_ids = frozenset({_ORG_ID})
     server._allowed_project_ids = frozenset({_PROJECT_ID})
+    server._reset_vanguard_custom_detector_docs_cache()
 
 
 def teardown_module() -> None:
     server._context = None
     server._allowed_org_ids = frozenset()
     server._allowed_project_ids = frozenset()
+    server._reset_vanguard_custom_detector_docs_cache()
 
 
 def test_list_organizations() -> None:
@@ -120,6 +122,11 @@ def test_get_versions_details() -> None:
     assert all(version.id > 0 for version in versions)
     assert all(isinstance(version.latest, bool) for version in versions)
     assert any(version.latest for version in versions)
+
+
+def test_vanguard_custom_detector_docs_resource() -> None:
+    contents = _run(server.mcp.read_resource(server._VANGUARD_CUSTOM_DETECTOR_DOCS_RESOURCE_URI))
+    assert len(list(contents)) == 1
 
 
 def test_list_vanguard_detectors() -> None:

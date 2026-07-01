@@ -8,6 +8,7 @@ import os
 import sys
 import textwrap
 import unittest
+import urllib.error
 from datetime import UTC, datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -19,6 +20,7 @@ from audithub_sdk.models.custom_detector_from_standard_library import (  # noqa:
     CustomDetectorFromStandardLibrary,
 )
 from mcp import types as mcp_types
+from mcp.server.fastmcp.exceptions import ResourceError  # noqa: E402
 from pydantic import ValidationError
 
 import audithub_mcp.server as server  # noqa: E402
@@ -246,6 +248,23 @@ _FULL_ENV: dict[str, str] = {
     "AUDITHUB_OIDC_CLIENT_ID": "test-client-id",
     "AUDITHUB_OIDC_CLIENT_SECRET": "test-client-secret",
 }
+
+
+class _FakeMarkdownResponse:
+    def __init__(self, body: str) -> None:
+        self._body = body.encode("utf-8")
+        self.headers = SimpleNamespace(
+            get_content_charset=lambda default=None: "utf-8",
+        )
+
+    def __enter__(self) -> _FakeMarkdownResponse:
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        return None
+
+    def read(self) -> bytes:
+        return self._body
 
 
 def setUpModule() -> None:
@@ -615,6 +634,7 @@ class TestReadOnlyToolSurface(unittest.TestCase):
     def tearDown(self) -> None:
         server._set_task_runs_enabled(False)
         server._set_version_creation_enabled(False)
+        server._reset_vanguard_custom_detector_docs_cache()
 
     def test_vanguard_custom_detector_docs_resource_is_registered(self) -> None:
         resources = list(asyncio.run(server.mcp.list_resources()))
@@ -627,15 +647,71 @@ class TestReadOnlyToolSurface(unittest.TestCase):
         self.assertEqual(resource.title, "Vanguard custom detector docs")
         self.assertEqual(resource.mimeType, "application/json")
 
-    def test_vanguard_custom_detector_docs_resource_returns_urls(self) -> None:
-        contents = list(
-            asyncio.run(
-                server.mcp.read_resource(server._VANGUARD_CUSTOM_DETECTOR_DOCS_RESOURCE_URI)
+    def test_vanguard_custom_detector_docs_resource_downloads_and_caches_markdown(self) -> None:
+        responses = {
+            server._VANGUARD_CUSTOM_DETECTOR_DOCS[
+                "Custom Detector Definition"
+            ]: _FakeMarkdownResponse("# definition\n"),
+            server._VANGUARD_CUSTOM_DETECTOR_DOCS["PAQL Reference"]: _FakeMarkdownResponse(
+                "# paql\n"
+            ),
+            server._VANGUARD_CUSTOM_DETECTOR_DOCS["Solidity PAQL Dialect"]: _FakeMarkdownResponse(
+                "# solidity\n"
+            ),
+        }
+
+        with patch.object(
+            server.urllib.request,
+            "urlopen",
+            side_effect=lambda url: responses[url],
+        ) as mock_urlopen:
+            contents = list(
+                asyncio.run(
+                    server.mcp.read_resource(server._VANGUARD_CUSTOM_DETECTOR_DOCS_RESOURCE_URI)
+                )
             )
+            self.assertEqual(len(contents), 1)
+            self.assertEqual(contents[0].mime_type, "application/json")
+            self.assertEqual(
+                json.loads(contents[0].content),
+                {
+                    "Custom Detector Definition": "# definition\n",
+                    "PAQL Reference": "# paql\n",
+                    "Solidity PAQL Dialect": "# solidity\n",
+                },
+            )
+
+            cached_contents = list(
+                asyncio.run(
+                    server.mcp.read_resource(server._VANGUARD_CUSTOM_DETECTOR_DOCS_RESOURCE_URI)
+                )
+            )
+            self.assertEqual(len(cached_contents), 1)
+            self.assertEqual(cached_contents[0].content, contents[0].content)
+            self.assertEqual(mock_urlopen.call_count, 3)
+
+    def test_vanguard_custom_detector_docs_resource_raises_on_http_error(self) -> None:
+        error = urllib.error.HTTPError(
+            server._VANGUARD_CUSTOM_DETECTOR_DOCS["PAQL Reference"],
+            404,
+            "Not Found",
+            hdrs=None,
+            fp=None,
         )
-        self.assertEqual(len(contents), 1)
-        self.assertEqual(contents[0].mime_type, "application/json")
-        self.assertEqual(json.loads(contents[0].content), server._VANGUARD_CUSTOM_DETECTOR_DOCS)
+
+        with (
+            patch.object(
+                server.urllib.request,
+                "urlopen",
+                side_effect=(_FakeMarkdownResponse("# definition\n"), error),
+            ),
+            self.assertRaises(ResourceError),
+        ):
+            list(
+                asyncio.run(
+                    server.mcp.read_resource(server._VANGUARD_CUSTOM_DETECTOR_DOCS_RESOURCE_URI)
+                )
+            )
 
     def test_default_tools_start_with_get(self) -> None:
         server._set_task_runs_enabled(False)
@@ -650,7 +726,12 @@ class TestReadOnlyToolSurface(unittest.TestCase):
         for name in names:
             self.assertTrue(
                 name.startswith("get_")
-                or name in {"parse_findings_from_task_log", "wait_for_task_completion"},
+                or name
+                in {
+                    "help_context",
+                    "parse_findings_from_task_log",
+                    "wait_for_task_completion",
+                },
                 msg=f"unexpected default tool name: {name}",
             )
         self.assertIn("parse_findings_from_task_log", names)
