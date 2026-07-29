@@ -33,6 +33,22 @@ values when `--config` is not supplied, or when `--config` is supplied without `
 Notes:
 - boolean values such as `AH_ENABLE_*` accept `1/0`, `true/false`, `yes/no`, and `on/off`.
 
+### PAQL Validator
+
+The read-only `validate_paql` tool uses PAQL's native executable. The development package
+currently bundles a macOS arm64 build for local testing. The copied executable retains a
+Nix-store tree-sitter dependency, so it must be replaced with a portable build before release.
+The native approach avoids requiring a Node.js runtime, an npm package, and generated
+WebAssembly loader assets.
+
+- `PAQL_EXECUTABLE` (optional)
+  - Path or command name for the native PAQL executable.
+  - Resolution order: this override, the bundled executable, then `paql` from `PATH`.
+- `PAQL_DIALECT_SPEC` (optional)
+  - Path overriding the bundled Vanguard Solidity dialect spec used when `validate_paql`
+    receives `typecheck=true`.
+  - Omit it to use the bundled Solidity dialect.
+
 ### Required
 
 The following options need to be set from an AuditHub API key; instructions on

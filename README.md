@@ -18,6 +18,11 @@ Additional features can be enabled through the configuration file.
 - Python 3.12+
 - [uv](https://docs.astral.sh/uv/)
 
+The development package currently includes a macOS arm64 PAQL executable for local
+`validate_paql` testing. This copied build retains a Nix-store tree-sitter dependency and is
+not a portable release artifact. On another system, set `PAQL_EXECUTABLE` to a compatible
+native PAQL binary or make `paql` available on `PATH`.
+
 ## Installation
 
 `audithub-mcp` is implemented as a Python package, but it is not yet available in PyPI.
@@ -117,6 +122,7 @@ configuration file.
 | `get_task_findings` | Fetch findings for a task and write them to a local output file |
 | `wait_for_task_completion` | Poll a task until no pending steps remain or the timeout is reached, then return the latest task snapshot and completion state; with no timeout, task-capable clients can invoke it as a task |
 | `parse_findings_from_task_log` | Parse one or more task log files into JSON containing findings plus counts written to a local absolute output path |
+| `validate_paql` | Parse a PAQL pattern or Luau query definition with the native PAQL validator; optionally typecheck it against the configured dialect |
 | `get_version_comments` | Get comments for a specific project version |
 | `get_version_comment_threads` | Get comment threads for a specific project version |
 | `get_thread_comments` | Get comments for a specific thread within a project version |
@@ -150,6 +156,12 @@ allowlists.
 - **On-chain OrCa mode.** When launching OrCa against already deployed contracts, pass `deployment_info_file` as a path ending in `.deployment.json`. The server normalizes that into `on_chain=True` and rejects mismatched paths early so callers do not accidentally launch a local Foundry-style run.
 - **Opt-in version creation.** The `create_version_from_url` mutation tool is registered only when `AH_ENABLE_VERSION_CREATION=1` or `--enable-version-creation` is supplied. It calls the generated project version URL POST endpoint through `audithub-sdk`.
 - **Local findings parsing.** The `parse_findings_from_task_log` utility tool reads one or more local task log files, extracts findings with the shared log parser, and writes a JSON file containing the parsed findings plus the total finding count and per-log counts. It does not call the AuditHub API.
+- **Local PAQL validation.** The `validate_paql` utility tool invokes the bundled native
+  `paql` executable directly without a shell and does not contact AuditHub. An explicitly
+  configured `PAQL_EXECUTABLE` takes precedence over the bundle, followed by a `paql`
+  executable on `PATH` when the bundle is unavailable. Syntax validation is available by
+  default. Typechecking uses the bundled Vanguard Solidity dialect spec; an explicitly
+  configured `PAQL_DIALECT_SPEC` overrides it.
 - **Detector catalog cache.** The DeFi Vanguard v2 built-in detector list is fetched lazily from the AuditHub configuration endpoint and cached in-process for one day. Custom detectors are fetched live on each request from both the organization library and the standard library.
 - **Detector listing format.** `get_defi_vanguard_detectors` returns one block per detector. Each block starts with `detector: <json>` where `<json>` is a JSON value matching `DefiVanguardV2DetectorSelectionInput`, followed by `title:`. Standard-library custom detectors also include `description:` loaded from the detector payload. Each block ends with `------`.
 - **Credential isolation.** OIDC credentials are read from the environment once at startup and passed into `audithub_sdk_ext.AuthenticatedApiClient`. They are never accepted as tool arguments and are not surfaced in tool outputs or sanitized error messages.

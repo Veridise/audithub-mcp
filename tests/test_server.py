@@ -36,6 +36,7 @@ from audithub_mcp.models import (  # noqa: E402
     OrCaParametersInput,
     OrCaTaskInput,
     OrCaVersionSpecReference,
+    PaqlValidationResult,
     Task,
     TaskArtifact,
     TaskArtifactContent,
@@ -730,11 +731,13 @@ class TestReadOnlyToolSurface(unittest.TestCase):
                 in {
                     "help_context",
                     "parse_findings_from_task_log",
+                    "validate_paql",
                     "wait_for_task_completion",
                 },
                 msg=f"unexpected default tool name: {name}",
             )
         self.assertIn("parse_findings_from_task_log", names)
+        self.assertIn("validate_paql", names)
         self.assertIn("wait_for_task_completion", names)
 
     def test_run_orca_task_registers_only_when_enabled(self) -> None:
@@ -778,6 +781,26 @@ class TestToolCalls(unittest.IsolatedAsyncioTestCase):
         server._set_task_runs_enabled(False)
         server._set_version_creation_enabled(False)
         server._set_edit_custom_detectors_enabled(False)
+
+    async def test_validate_paql_delegates_to_native_adapter(self) -> None:
+        expected = PaqlValidationResult(success=True)
+        with patch.object(
+            server.paql,
+            "validate_source",
+            AsyncMock(return_value=expected),
+        ) as validate_source:
+            result = await server.validate_paql(
+                "FIND Contract c",
+                source_format="pattern",
+                typecheck=False,
+            )
+
+        self.assertEqual(result, expected)
+        validate_source.assert_awaited_once_with(
+            "FIND Contract c",
+            source_format="pattern",
+            typecheck=False,
+        )
 
     async def test_get_organizations_filters_allowlist_and_sorts(self) -> None:
         with patch.object(

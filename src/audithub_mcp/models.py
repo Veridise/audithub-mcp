@@ -152,6 +152,16 @@ class TaskLogsWriteResult(BaseModel):
     num_logs: Annotated[int, Field(ge=0)]
 
 
+class PaqlValidationResult(BaseModel):
+    """Result returned after validating PAQL source code."""
+
+    model_config = ConfigDict(frozen=True)
+
+    success: bool
+    errors: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+
+
 class WaitForTaskCompletionResult(BaseModel):
     """Result returned after waiting for a task to complete or timing out."""
 
@@ -438,6 +448,7 @@ __all__ = [
     "OrCaTaskInput",
     "OrCaVersionHintReference",
     "OrCaVersionSpecReference",
+    "PaqlValidationResult",
     "Project",
     "ProjectLookupItem",
     "Task",

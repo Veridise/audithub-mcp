@@ -20,7 +20,7 @@ import urllib.request
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Annotated, Any, cast
+from typing import Annotated, Any, Literal, cast
 
 import audithub_sdk
 from audithub_sdk.api.configuration_api import ConfigurationApi
@@ -57,7 +57,7 @@ from mcp.shared.exceptions import McpError
 from pydantic import Field, TypeAdapter, ValidationError
 
 from audithub_mcp import config as server_config
-from audithub_mcp import parse_fio_logs, vanguard
+from audithub_mcp import paql, parse_fio_logs, vanguard
 from audithub_mcp.audit import log_call_error, log_call_start, log_call_success
 from audithub_mcp.models import (
     Comment,
@@ -82,6 +82,7 @@ from audithub_mcp.models import (
     OrCaVersionHintReference,
     OrCaVersionSpecReference,
     OrganizationLookupItem,
+    PaqlValidationResult,
     Project,
     ProjectLookupItem,
     Task,
@@ -103,6 +104,14 @@ _AhId = server_config._AhId
 _ArtifactId = server_config._ArtifactId
 _MaxBytes = server_config._MaxBytes
 _DEFAULT_ARTIFACT_MAX_BYTES = server_config._DEFAULT_ARTIFACT_MAX_BYTES
+_PaqlSource = Annotated[
+    str,
+    Field(
+        min_length=1,
+        max_length=1_000_000,
+        description="PAQL pattern or Luau query-definition source text to validate.",
+    ),
+]
 AuditHubSdkContext = server_config.AuditHubSdkContext
 AuditHubServerConfig = server_config.AuditHubServerConfig
 load_config_from_env = server_config.load_config_from_env
@@ -629,6 +638,44 @@ tools.
 Do not use get_task_artifact to download findings.
 Never read any findings.json file directly.
 """
+
+
+@mcp.tool()
+async def validate_paql(
+    source: _PaqlSource,
+    source_format: Annotated[
+        Literal["pattern", "query-def"],
+        Field(
+            description=(
+                "Use 'pattern' for a PAQL query pattern or 'query-def' for a Luau "
+                "query-definition file."
+            )
+        ),
+    ] = "pattern",
+    typecheck: Annotated[
+        bool,
+        Field(
+            description=(
+                "Typecheck against the bundled Solidity dialect spec, or the server's "
+                "PAQL_DIALECT_SPEC override, in addition to parsing."
+            )
+        ),
+    ] = False,
+) -> PaqlValidationResult:
+    """Validate PAQL source without executing a query or contacting AuditHub."""
+
+    async def _run() -> PaqlValidationResult:
+        return await paql.validate_source(
+            source,
+            source_format=source_format,
+            typecheck=typecheck,
+        )
+
+    return await _run_tool(
+        _run,
+        tool_name="validate_paql",
+        safe_args={"typecheck": typecheck},
+    )
 
 
 @mcp.tool()
