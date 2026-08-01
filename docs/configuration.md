@@ -35,15 +35,17 @@ Notes:
 
 ### PAQL Validator
 
-The read-only `validate_paql` tool uses PAQL's native executable. The development package
-currently bundles a macOS arm64 build for local testing. The copied executable retains a
-Nix-store tree-sitter dependency, so it must be replaced with a portable build before release.
-The native approach avoids requiring a Node.js runtime, an npm package, and generated
-WebAssembly loader assets.
+The read-only `validate_paql` tool uses the bundled Emscripten WebAssembly build of PAQL. A
+cross-platform Node.js runtime is installed through uv as part of the Python package; operators
+do not need to install Node.js or PAQL separately.
 
-- `PAQL_EXECUTABLE` (optional)
-  - Path or command name for the native PAQL executable.
-  - Resolution order: this override, the bundled executable, then `paql` from `PATH`.
+- `PAQL_NODE_EXECUTABLE` (optional)
+  - Path to an alternative Node.js executable used to host the PAQL WebAssembly module.
+  - Omit it to use the runtime installed by the `nodejs-wheel` dependency.
+- `PAQL_WASM_MODULE` (optional)
+  - Path to an alternative Emscripten JavaScript module.
+  - Its paired `.wasm` file must have the same basename and reside in the same directory.
+  - Omit it to use the bundled `paql-wasm.js` and `paql-wasm.wasm` files.
 - `PAQL_DIALECT_SPEC` (optional)
   - Path overriding the bundled Vanguard Solidity dialect spec used when `validate_paql`
     receives `typecheck=true`.

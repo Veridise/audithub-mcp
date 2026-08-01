@@ -364,6 +364,16 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="List all registered MCP tools and their schemas, then exit.",
     )
+    parser.add_argument(
+        "--local-http-server",
+        action="store_true",
+        help="List all registered MCP tools and their schemas, then exit.",
+    )
+    parser.add_argument(
+        "--local-http-port",
+        type=int,
+        help="List all registered MCP tools and their schemas, then exit.",
+    )
     return parser
 
 
@@ -1915,7 +1925,14 @@ def main() -> None:
     _set_version_creation_enabled(settings.version_creation_enabled)
     _set_edit_custom_detectors_enabled(settings.edit_custom_detectors_enabled)
     _context = settings.context
-    mcp.run()
+    if args.local_http_server:
+        if not args.local_http_port:
+            parser.error("Port is required when server is run in http server mode")
+        mcp.settings.host = "127.0.0.1"
+        mcp.settings.port = args.local_http_port
+        mcp.run(transport="streamable-http")
+    else:
+        mcp.run()
 
 
 if __name__ == "__main__":

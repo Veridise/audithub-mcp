@@ -782,7 +782,7 @@ class TestToolCalls(unittest.IsolatedAsyncioTestCase):
         server._set_version_creation_enabled(False)
         server._set_edit_custom_detectors_enabled(False)
 
-    async def test_validate_paql_delegates_to_native_adapter(self) -> None:
+    async def test_validate_paql_delegates_to_wasm_adapter(self) -> None:
         expected = PaqlValidationResult(success=True)
         with patch.object(
             server.paql,

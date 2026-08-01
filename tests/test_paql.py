@@ -1,4 +1,4 @@
-"""Tests for the native PAQL subprocess adapter."""
+"""Tests for the WebAssembly PAQL subprocess adapter."""
 
 from __future__ import annotations
 
@@ -50,15 +50,16 @@ async def test_validate_pattern_invokes_paql_without_a_shell() -> None:
 
     async def _create_process(*command: str, **_kwargs: object) -> _FakeProcess:
         nonlocal captured_source
-        source_path = Path(command[3])
+        source_path = Path(command[4])
         captured_source = source_path.read_text(encoding="utf-8")
         assert source_path.stat().st_mode & 0o777 == 0o600
-        assert command[:3] == (
-            str(paql._BUNDLED_PAQL_EXECUTABLE),
+        assert command[1:4] == (
+            str(paql._BUNDLED_PAQL_WASM_MODULE),
             "validate",
             "pattern",
         )
-        assert command[4:] == ("--no-typecheck",)
+        assert Path(command[0]).name == "node"
+        assert command[5:] == ("--no-typecheck",)
         return process
 
     with (
@@ -76,15 +77,26 @@ async def test_validate_pattern_invokes_paql_without_a_shell() -> None:
     assert captured_source == "FIND Contract c"
 
 
-def test_operator_executable_overrides_bundled_paql() -> None:
+def test_operator_node_executable_overrides_packaged_runtime() -> None:
     with patch.dict(
         "os.environ",
-        {"PAQL_EXECUTABLE": "/opt/paql/bin/paql"},
+        {"PAQL_NODE_EXECUTABLE": "/opt/node/bin/node"},
         clear=True,
     ):
-        executable = paql._resolve_paql_executable()
+        executable = paql._resolve_node_executable()
 
-    assert executable == "/opt/paql/bin/paql"
+    assert executable == "/opt/node/bin/node"
+
+
+def test_operator_wasm_module_overrides_bundled_paql() -> None:
+    with patch.dict(
+        "os.environ",
+        {"PAQL_WASM_MODULE": "/opt/paql/paql-wasm.js"},
+        clear=True,
+    ):
+        module = paql._resolve_paql_wasm_module()
+
+    assert module == Path("/opt/paql/paql-wasm.js")
 
 
 def test_operator_dialect_overrides_bundled_solidity_spec() -> None:
@@ -99,9 +111,35 @@ def test_operator_dialect_overrides_bundled_solidity_spec() -> None:
 
 
 @pytest.mark.asyncio
+async def test_bundled_wasm_validates_pattern() -> None:
+    result = await paql.validate_source(
+        "FIND Contract c",
+        source_format="pattern",
+        typecheck=True,
+    )
+
+    assert result.success
+    assert result.errors == []
+
+
+@pytest.mark.asyncio
+async def test_bundled_wasm_reports_invalid_pattern() -> None:
+    result = await paql.validate_source(
+        "???",
+        source_format="pattern",
+        typecheck=False,
+    )
+
+    assert not result.success
+    assert len(result.errors) == 1
+    assert "<query>" in result.errors[0]
+    assert "unexpected '???'" in result.errors[0]
+
+
+@pytest.mark.asyncio
 async def test_validate_source_returns_sanitized_paql_errors() -> None:
     async def _create_process(*command: str, **_kwargs: object) -> _FakeProcess:
-        source_path = command[3]
+        source_path = command[4]
         return _FakeProcess(
             returncode=1,
             stderr=f"{source_path}:1:6: error: unexpected token\n".encode(),
@@ -121,7 +159,7 @@ async def test_validate_source_returns_sanitized_paql_errors() -> None:
 @pytest.mark.asyncio
 async def test_validate_source_separates_warnings_from_errors() -> None:
     async def _create_process(*command: str, **_kwargs: object) -> _FakeProcess:
-        source_path = command[3]
+        source_path = command[4]
         return _FakeProcess(
             returncode=1,
             stderr=(
@@ -146,7 +184,7 @@ async def test_validate_source_separates_warnings_from_errors() -> None:
 async def test_typechecking_requires_operator_configured_dialect() -> None:
     create_process = AsyncMock()
     with (
-        patch.dict("os.environ", {"PAQL_EXECUTABLE": "/opt/paql"}, clear=True),
+        patch.dict("os.environ", {}, clear=True),
         patch.object(
             paql,
             "_BUNDLED_PAQL_DIALECT_SPEC",
@@ -168,7 +206,7 @@ async def test_typechecking_requires_operator_configured_dialect() -> None:
 @pytest.mark.asyncio
 async def test_typechecking_uses_bundled_solidity_dialect() -> None:
     async def _create_process(*command: str, **_kwargs: object) -> _FakeProcess:
-        assert command[4:] == (
+        assert command[5:] == (
             "--dialect-spec",
             str(paql._BUNDLED_PAQL_DIALECT_SPEC),
         )
@@ -194,7 +232,7 @@ async def test_typechecking_passes_and_sanitizes_configured_dialect() -> None:
         dialect_path.write_text("return {}", encoding="utf-8")
 
         async def _create_process(*command: str, **_kwargs: object) -> _FakeProcess:
-            assert command[4:] == ("--dialect-spec", str(dialect_path))
+            assert command[5:] == ("--dialect-spec", str(dialect_path))
             return _FakeProcess(
                 returncode=1,
                 stderr=f"{dialect_path}: error: invalid dialect\n".encode(),
@@ -219,7 +257,7 @@ async def test_typechecking_passes_and_sanitizes_configured_dialect() -> None:
 
 
 @pytest.mark.asyncio
-async def test_missing_paql_executable_is_a_validation_error() -> None:
+async def test_missing_paql_runtime_is_a_validation_error() -> None:
     with patch(
         "asyncio.create_subprocess_exec",
         AsyncMock(side_effect=FileNotFoundError),
@@ -231,7 +269,27 @@ async def test_missing_paql_executable_is_a_validation_error() -> None:
         )
 
     assert not result.success
-    assert "PAQL executable was not found" in result.errors[0]
+    assert "PAQL WebAssembly runtime was not found" in result.errors[0]
+
+
+@pytest.mark.asyncio
+async def test_missing_paired_wasm_binary_is_a_validation_error() -> None:
+    with TemporaryDirectory() as temp_dir:
+        module_path = Path(temp_dir) / "paql-wasm.js"
+        module_path.write_text("", encoding="utf-8")
+        with patch.dict(
+            "os.environ",
+            {"PAQL_WASM_MODULE": str(module_path)},
+            clear=True,
+        ):
+            result = await paql.validate_source(
+                "FIND Contract c",
+                source_format="pattern",
+                typecheck=False,
+            )
+
+    assert not result.success
+    assert result.errors == ["The WebAssembly binary paired with PAQL_WASM_MODULE does not exist."]
 
 
 @pytest.mark.asyncio

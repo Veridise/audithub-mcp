@@ -1,4 +1,4 @@
-"""Safe subprocess adapter for the native PAQL validator."""
+"""Safe subprocess adapter for the WebAssembly PAQL validator."""
 
 from __future__ import annotations
 
@@ -8,28 +8,37 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Literal
 
+from nodejs_wheel import executable as nodejs_executable
+
 from audithub_mcp.models import PaqlValidationResult
 
 PaqlSourceFormat = Literal["pattern", "query-def"]
 
-_DEFAULT_PAQL_EXECUTABLE = "paql"
 _DEFAULT_TIMEOUT_SECONDS = 10.0
-_PAQL_EXECUTABLE_ENV_VAR = "PAQL_EXECUTABLE"
+_PAQL_NODE_EXECUTABLE_ENV_VAR = "PAQL_NODE_EXECUTABLE"
+_PAQL_WASM_MODULE_ENV_VAR = "PAQL_WASM_MODULE"
 _PAQL_DIALECT_SPEC_ENV_VAR = "PAQL_DIALECT_SPEC"
-_BUNDLED_PAQL_EXECUTABLE = (
-    Path(__file__).parent / "_bin" / ("paql.exe" if os.name == "nt" else "paql")
-)
+_BUNDLED_PAQL_WASM_MODULE = Path(__file__).parent / "_bin" / "paql-wasm.js"
 _BUNDLED_PAQL_DIALECT_SPEC = Path(__file__).parent / "_data" / "solidityDialectSpec.luau"
 
 
-def _resolve_paql_executable() -> str:
-    """Resolve the operator override, bundled binary, or system command."""
-    override = os.environ.get(_PAQL_EXECUTABLE_ENV_VAR)
+def _resolve_node_executable() -> str:
+    """Resolve the operator override or uv-installed Node executable."""
+    override = os.environ.get(_PAQL_NODE_EXECUTABLE_ENV_VAR)
     if override:
         return override
-    if _BUNDLED_PAQL_EXECUTABLE.is_file():
-        return str(_BUNDLED_PAQL_EXECUTABLE)
-    return _DEFAULT_PAQL_EXECUTABLE
+    package_dir = Path(nodejs_executable.__file__).parent
+    if os.name == "nt":
+        return str(package_dir / "node.exe")
+    return str(package_dir / "bin" / "node")
+
+
+def _resolve_paql_wasm_module() -> Path:
+    """Resolve the operator override or bundled Emscripten module."""
+    override = os.environ.get(_PAQL_WASM_MODULE_ENV_VAR)
+    if override:
+        return Path(override)
+    return _BUNDLED_PAQL_WASM_MODULE
 
 
 def _resolve_paql_dialect_spec() -> Path | None:
@@ -57,7 +66,7 @@ def _diagnostic_lines(
 
 
 def _split_diagnostics(diagnostics: list[str]) -> tuple[list[str], list[str]]:
-    """Separate native PAQL warning diagnostics from errors."""
+    """Separate PAQL warning diagnostics from errors."""
     errors: list[str] = []
     warnings: list[str] = []
     for diagnostic in diagnostics:
@@ -93,7 +102,7 @@ async def validate_source(
     typecheck: bool,
     timeout_seconds: float = _DEFAULT_TIMEOUT_SECONDS,
 ) -> PaqlValidationResult:
-    """Validate PAQL source with the native ``paql`` command-line program.
+    """Validate PAQL source with the bundled Emscripten WebAssembly module.
 
     Args:
         source: PAQL pattern text or Luau query-definition text.
@@ -104,7 +113,19 @@ async def validate_source(
     Returns:
         A structured validation result containing errors and warnings.
     """
-    executable = _resolve_paql_executable()
+    node_executable = _resolve_node_executable()
+    wasm_module = _resolve_paql_wasm_module()
+    if not wasm_module.is_file():
+        return PaqlValidationResult(
+            success=False,
+            errors=["The configured PAQL_WASM_MODULE file does not exist."],
+        )
+    if not wasm_module.with_suffix(".wasm").is_file():
+        return PaqlValidationResult(
+            success=False,
+            errors=["The WebAssembly binary paired with PAQL_WASM_MODULE does not exist."],
+        )
+
     dialect_spec_path: Path | None = None
     if typecheck:
         dialect_spec_path = _resolve_paql_dialect_spec()
@@ -128,7 +149,13 @@ async def validate_source(
         source_path.write_text(source, encoding="utf-8")
         source_path.chmod(0o600)
 
-        command = [executable, "validate", source_format, str(source_path)]
+        command = [
+            node_executable,
+            str(wasm_module),
+            "validate",
+            source_format,
+            str(source_path),
+        ]
         if typecheck:
             assert dialect_spec_path is not None
             command.extend(["--dialect-spec", str(dialect_spec_path)])
@@ -145,14 +172,14 @@ async def validate_source(
             return PaqlValidationResult(
                 success=False,
                 errors=[
-                    "PAQL executable was not found. Install it on PATH or set "
-                    "PAQL_EXECUTABLE for the server."
+                    "The PAQL WebAssembly runtime was not found. Reinstall the server "
+                    "dependencies or set PAQL_NODE_EXECUTABLE."
                 ],
             )
         except OSError:
             return PaqlValidationResult(
                 success=False,
-                errors=["The configured PAQL executable could not be started."],
+                errors=["The configured PAQL WebAssembly runtime could not be started."],
             )
 
         output = await _communicate(process, timeout_seconds=timeout_seconds)
