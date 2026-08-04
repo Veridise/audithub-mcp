@@ -33,6 +33,24 @@ values when `--config` is not supplied, or when `--config` is supplied without `
 Notes:
 - boolean values such as `AH_ENABLE_*` accept `1/0`, `true/false`, `yes/no`, and `on/off`.
 
+### PAQL Validator
+
+The read-only `validate_paql` tool uses the bundled Emscripten WebAssembly build of PAQL. A
+cross-platform Node.js runtime is installed through uv as part of the Python package; operators
+do not need to install Node.js or PAQL separately.
+
+- `PAQL_NODE_EXECUTABLE` (optional)
+  - Path to an alternative Node.js executable used to host the PAQL WebAssembly module.
+  - Omit it to use the runtime installed by the `nodejs-wheel` dependency.
+- `PAQL_WASM_MODULE` (optional)
+  - Path to an alternative Emscripten JavaScript module.
+  - Its paired `.wasm` file must have the same basename and reside in the same directory.
+  - Omit it to use the bundled `paql-wasm.js` and `paql-wasm.wasm` files.
+- `PAQL_DIALECT_SPEC` (optional)
+  - Path overriding the bundled Vanguard Solidity dialect spec used when `validate_paql`
+    receives `typecheck=true`.
+  - Omit it to use the bundled Solidity dialect.
+
 ### Required
 
 The following options need to be set from an AuditHub API key; instructions on

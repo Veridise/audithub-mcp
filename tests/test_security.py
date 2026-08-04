@@ -16,6 +16,7 @@ from audithub_mcp.models import (  # noqa: E402
     OrCaAdHocSpecReference,
     OrCaParametersInput,
     OrCaTaskInput,
+    PaqlValidationResult,
     VersionFromFileInput,
     VersionFromUrlInput,
 )
@@ -485,6 +486,25 @@ class TestDisallowedIds(unittest.IsolatedAsyncioTestCase):
         self.assertIn("999", str(cm.exception))
         self.assertNotIn("frozenset", str(cm.exception))
         mock.assert_not_awaited()
+
+
+class TestPaqlPrivacy(unittest.IsolatedAsyncioTestCase):
+    async def test_paql_source_not_in_audit_log(self) -> None:
+        import audithub_mcp.audit as audit_mod
+
+        source = "FIND Contract SECRET_PAQL_SOURCE"
+        with (
+            patch.object(
+                server.paql,
+                "validate_source",
+                AsyncMock(return_value=PaqlValidationResult(success=True)),
+            ),
+            patch.object(audit_mod.logger, "info") as mock_info,
+        ):
+            await server.validate_paql(source)
+
+        rendered_calls = " ".join(str(call) for call in mock_info.call_args_list)
+        self.assertNotIn("SECRET_PAQL_SOURCE", rendered_calls)
 
 
 class TestStepCodePrivacy(unittest.IsolatedAsyncioTestCase):
