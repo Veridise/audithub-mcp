@@ -358,9 +358,23 @@ class TestBuildContext(unittest.TestCase):
             )
         self.assertIn(".deployment.json", str(cm.exception))
 
+    def test_custom_detector_upload_requires_source(self) -> None:
+        with self.assertRaises(ValidationError) as cm:
+            CustomDetectorUploadInput(filename="detector.luau")
+        self.assertIn("contents or file_path is required", str(cm.exception))
+
+    def test_custom_detector_upload_accepts_inline_contents(self) -> None:
+        input_data = CustomDetectorUploadInput(
+            contents="rule body\n",
+            filename="detector.luau",
+        )
+        self.assertEqual(input_data.contents, "rule body\n")
+        self.assertIsNone(input_data.file_path)
+        self.assertEqual(input_data.filename, "detector.luau")
+
     def test_custom_detector_upload_requires_filename_without_update(self) -> None:
         with self.assertRaises(ValidationError) as cm:
-            CustomDetectorUploadInput(file_path="/tmp/detector.luau")
+            CustomDetectorUploadInput(contents="rule body\n")
         self.assertIn("filename is required", str(cm.exception))
 
     def test_secret_not_in_error_message(self) -> None:
@@ -739,6 +753,16 @@ class TestReadOnlyToolSurface(unittest.TestCase):
         self.assertIn("parse_findings_from_task_log", names)
         self.assertIn("validate_paql", names)
         self.assertIn("wait_for_task_completion", names)
+
+    def test_help_context_mentions_custom_detector_input_contract(self) -> None:
+        help_text = asyncio.run(server.help_context())
+        self.assertIn(
+            "Custom detector uploads accept either inline `contents` or a local `file_path`.",
+            help_text,
+        )
+        self.assertIn("`filename` is required when creating a detector.", help_text)
+        self.assertIn("If both `contents` and", help_text)
+        self.assertIn("`file_path` are provided, the inline `contents` value is used.", help_text)
 
     def test_run_orca_task_registers_only_when_enabled(self) -> None:
         server._set_task_runs_enabled(True)
@@ -1758,6 +1782,32 @@ class TestToolCalls(unittest.IsolatedAsyncioTestCase):
 
     async def test_upload_custom_detector_creates_detector(self) -> None:
         server._set_edit_custom_detectors_enabled(True)
+        mock = AsyncMock(return_value=SimpleNamespace(id=77, message="Detector created"))
+        with patch.object(
+            server.CustomDetectorsOrgLibApi,
+            "post_custom_detector_organizations_organization_id_custom_detectors_post",
+            mock,
+        ):
+            result = await server.upload_custom_detector(
+                organization_id=1,
+                contents="rule body\n",
+                filename="detector.luau",
+            )
+        self.assertIsInstance(result, CustomDetectorUploadResult)
+        self.assertEqual(result.id, 77)
+        self.assertEqual(result.filename, "detector.luau")
+        self.assertEqual(result.message, "Detector created")
+        call_args = mock.await_args
+        assert call_args is not None
+        kwargs = call_args.kwargs
+        self.assertEqual(kwargs["organization_id"], 1)
+        custom_detector = kwargs["custom_detector"]
+        self.assertEqual(custom_detector.filename, "detector.luau")
+        self.assertEqual(custom_detector.contents, "rule body\n")
+        self.assertEqual(custom_detector.encoding, "plain")
+
+    async def test_upload_custom_detector_creates_detector_from_file_path(self) -> None:
+        server._set_edit_custom_detectors_enabled(True)
         with TemporaryDirectory() as tmpdir:
             detector_path = Path(tmpdir) / "detector.luau"
             detector_path.write_text("rule body\n", encoding="utf-8")
@@ -1786,6 +1836,47 @@ class TestToolCalls(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(custom_detector.encoding, "plain")
 
     async def test_upload_custom_detector_updates_detector_using_existing_filename(self) -> None:
+        server._set_edit_custom_detectors_enabled(True)
+        get_mock = AsyncMock(return_value=SimpleNamespace(id=88, filename="existing.luau"))
+        put_mock = AsyncMock(return_value=SimpleNamespace(success=True, message="Detector updated"))
+        with (
+            patch.object(
+                server.CustomDetectorsOrgLibApi,
+                "get_custom_detector_organizations_organization_id_custom_detectors_custom_detector_id_get",
+                get_mock,
+            ),
+            patch.object(
+                server.CustomDetectorsOrgLibApi,
+                "put_custom_detector_organizations_organization_id_custom_detectors_custom_detector_id_put",
+                put_mock,
+            ),
+        ):
+            result = await server.upload_custom_detector(
+                organization_id=1,
+                contents="updated body\n",
+                update=88,
+            )
+        self.assertIsInstance(result, CustomDetectorUploadResult)
+        self.assertEqual(result.id, 88)
+        self.assertEqual(result.filename, "existing.luau")
+        self.assertEqual(result.message, "Detector updated")
+        self.assertIsNotNone(get_mock.await_args)
+        get_call = get_mock.await_args
+        assert get_call is not None
+        get_kwargs = get_call.kwargs
+        self.assertEqual(get_kwargs["organization_id"], 1)
+        self.assertEqual(get_kwargs["custom_detector_id"], 88)
+        self.assertIsNotNone(put_mock.await_args)
+        put_call = put_mock.await_args
+        assert put_call is not None
+        put_kwargs = put_call.kwargs
+        self.assertEqual(put_kwargs["organization_id"], 1)
+        self.assertEqual(put_kwargs["custom_detector_id"], 88)
+        custom_detector = put_kwargs["custom_detector"]
+        self.assertEqual(custom_detector.filename, "existing.luau")
+        self.assertEqual(custom_detector.contents, "updated body\n")
+
+    async def test_upload_custom_detector_updates_detector_from_file_path(self) -> None:
         server._set_edit_custom_detectors_enabled(True)
         with TemporaryDirectory() as tmpdir:
             detector_path = Path(tmpdir) / "detector.luau"

@@ -644,6 +644,11 @@ async def help_context() -> str:
 For authoritative information on Vanguard custom detectors, read the markdown at the audithub-mcp
 resource: docs://vanguard/custom-detectors.
 
+Custom detector uploads accept either inline `contents` or a local `file_path`. Prefer
+`contents` for remote clients. `filename` is required when creating a detector. `update`
+selects an existing detector; when updating, `filename` is optional. If both `contents` and
+`file_path` are provided, the inline `contents` value is used.
+
 To retrieve the findings of a Vanguard task, use the get_task_logs and parse_findings_from_task_log
 tools.
 Do not use get_task_artifact to download findings.
@@ -1739,6 +1744,18 @@ def _read_custom_detector_contents(file_path: str) -> str:
         raise RuntimeError(f"Failed to read custom detector file {detector_path}: {exc}") from None
 
 
+def _resolve_custom_detector_contents(
+    contents: str | None,
+    file_path: str | None,
+) -> str:
+    """Return custom detector source text from inline contents or a local file."""
+    if contents is not None:
+        return contents
+    if file_path is None:
+        raise RuntimeError("contents or file_path is required")
+    return _read_custom_detector_contents(file_path)
+
+
 async def _get_custom_detector_with_client(
     client: AuthenticatedApiClient,
     *,
@@ -1758,12 +1775,13 @@ async def _upload_custom_detector_with_client(
     client: AuthenticatedApiClient,
     *,
     organization_id: int,
-    file_path: str,
+    contents: str | None,
+    file_path: str | None,
     filename: str | None,
     update: int | None,
 ) -> CustomDetectorUploadResult:
     """Create or update an organization-level custom detector."""
-    contents = _read_custom_detector_contents(file_path)
+    detector_contents = _resolve_custom_detector_contents(contents, file_path)
     if update is None:
         if filename is None:
             raise RuntimeError("filename is required when creating a custom detector")
@@ -1773,7 +1791,7 @@ async def _upload_custom_detector_with_client(
             organization_id=organization_id,
             custom_detector=CustomDetector(
                 filename=filename,
-                contents=contents,
+                contents=detector_contents,
                 encoding="plain",
             ),
         )
@@ -1799,7 +1817,7 @@ async def _upload_custom_detector_with_client(
         custom_detector_id=update,
         custom_detector=CustomDetector(
             filename=resolved_filename,
-            contents=contents,
+            contents=detector_contents,
             encoding="plain",
         ),
     )
@@ -1813,16 +1831,23 @@ async def _upload_custom_detector_with_client(
 @mcp.tool()
 async def upload_custom_detector(
     organization_id: _AhId,
+    contents: Annotated[
+        str | None,
+        Field(
+            min_length=1,
+            description=("Inline custom detector source text. Preferred for remote MCP clients."),
+        ),
+    ] = None,
     file_path: Annotated[
-        str,
+        str | None,
         Field(
             min_length=1,
             description=(
-                "Absolute path to the custom detector definition file. "
+                "Absolute path to a local custom detector file for same-machine workflows. "
                 "MUST follow the format documented in docs://vanguard/custom-detectors"
             ),
         ),
-    ],
+    ] = None,
     filename: Annotated[
         str | None,
         Field(
@@ -1837,7 +1862,7 @@ async def upload_custom_detector(
         Field(description="Custom detector ID to update instead of creating a new detector."),
     ] = None,
 ) -> CustomDetectorUploadResult:
-    """Upload or update an organization-level custom detector from a local file."""
+    """Upload or update an organization-level custom detector."""
 
     async def _run() -> CustomDetectorUploadResult:
         _assert_edit_custom_detectors_enabled()
@@ -1848,6 +1873,7 @@ async def upload_custom_detector(
             lambda client: _upload_custom_detector_with_client(
                 client,
                 organization_id=organization_id,
+                contents=contents,
                 file_path=file_path,
                 filename=filename,
                 update=update,

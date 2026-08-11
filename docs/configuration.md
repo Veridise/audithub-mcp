@@ -104,3 +104,21 @@ appropriate `capabilities` options.
   - `edit_custom_detectors` (boolean)
     - Set to `true` to enable `upload_custom_detector` for organization-level custom
       detectors. Default: `false`.
+    - The tool accepts inline detector source text via `contents`. A local `file_path`
+      remains available for same-machine workflows, but remote MCP clients should pass
+      the detector text directly.
+    - Tool input contract:
+      - Provide either `contents` or `file_path`.
+      - `filename` is required when creating a detector.
+      - `update` selects an existing detector to replace; when updating, `filename` is optional.
+      - If both `contents` and `file_path` are supplied, the inline `contents` value is used.
+      - `file_path` should be an absolute path to a local detector file.
+    - Examples:
+      - Create a detector from inline text:
+        `upload_custom_detector(organization_id=1, contents="...", filename="foo.luau")`
+      - Create a detector from a local file:
+        `upload_custom_detector(organization_id=1, file_path="/abs/path/foo.luau", filename="foo.luau")`
+      - Update detector `42` using inline text:
+        `upload_custom_detector(organization_id=1, contents="...", update=42)`
+      - Update detector `42` and rename it:
+        `upload_custom_detector(organization_id=1, contents="...", filename="bar.luau", update=42)`
