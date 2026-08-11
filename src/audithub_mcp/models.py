@@ -90,12 +90,27 @@ class CustomDetectorUploadInput(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    file_path: Annotated[str, Field(min_length=1)]
+    contents: Annotated[
+        str | None,
+        Field(
+            min_length=1,
+            description="Inline custom detector source text. Preferred for remote MCP clients.",
+        ),
+    ] = None
+    file_path: Annotated[
+        str | None,
+        Field(
+            min_length=1,
+            description="Absolute path to a local custom detector file for same-machine workflows.",
+        ),
+    ] = None
     filename: Annotated[str | None, Field(min_length=1)] = None
     update: Annotated[_PositiveId | None, Field(description="Custom detector ID to update.")] = None
 
     @model_validator(mode="after")
     def _validate_filename_requirement(self) -> "CustomDetectorUploadInput":
+        if self.contents is None and self.file_path is None:
+            raise ValueError("contents or file_path is required")
         if self.update is None and self.filename is None:
             raise ValueError("filename is required when update is not provided")
         return self
