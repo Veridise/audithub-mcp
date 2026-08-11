@@ -53,6 +53,7 @@ from audithub_sdk.models.v_spec_from_version import VSpecFromVersion
 from audithub_sdk_ext import AuthenticatedApiClient, OIDCClientCredentialsContext
 from mcp import types as mcp_types
 from mcp.server.fastmcp import Context, FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 from mcp.shared.exceptions import McpError
 from pydantic import Field, TypeAdapter, ValidationError
 
@@ -1928,8 +1929,15 @@ def main() -> None:
     if args.local_http_server:
         if not args.local_http_port:
             parser.error("Port is required when server is run in http server mode")
-        mcp.settings.host = "127.0.0.1"
+        mcp.settings.host = "0.0.0.0"
         mcp.settings.port = args.local_http_port
+        transport_security = mcp.settings.transport_security or TransportSecuritySettings()
+        transport_security.allowed_hosts = [
+            "127.0.0.1:*",
+            "localhost:*",
+            "host.docker.internal:*",
+        ]
+        mcp.settings.transport_security = transport_security
         mcp.run(transport="streamable-http")
     else:
         mcp.run()
