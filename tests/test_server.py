@@ -22,6 +22,7 @@ from audithub_sdk.models.custom_detector_from_standard_library import (  # noqa:
 from mcp import types as mcp_types
 from mcp.server.fastmcp.exceptions import ResourceError  # noqa: E402
 from pydantic import ValidationError
+from starlette.requests import Request
 
 import audithub_mcp.server as server  # noqa: E402
 import audithub_mcp.vanguard as vanguard  # noqa: E402
@@ -579,6 +580,7 @@ class TestCtxCache(unittest.TestCase):
             self.assertIn('"name": "create_version_from_url"', rendered)
             self.assertIn('"name": "upload_custom_detector"', rendered)
             self.assertIn('"name": "parse_findings_from_task_log"', rendered)
+            self.assertNotIn('"name": "shutdown"', rendered)
             self.assertIsNone(server._context)
         finally:
             server._set_task_runs_enabled(False)
@@ -618,6 +620,101 @@ class TestCtxCache(unittest.TestCase):
             server._set_task_runs_enabled(False)
             server._set_version_creation_enabled(False)
             server._set_edit_custom_detectors_enabled(False)
+
+
+class TestShutdownEndpoint(unittest.IsolatedAsyncioTestCase):
+    def tearDown(self) -> None:
+        server._shutdown_secret = None
+
+    @staticmethod
+    def _request(authorization: str | None = None) -> Request:
+        headers = []
+        if authorization is not None:
+            headers.append((b"authorization", authorization.encode("ascii")))
+        return Request(
+            {
+                "type": "http",
+                "method": "POST",
+                "path": "/shutdown",
+                "headers": headers,
+            }
+        )
+
+    async def test_disabled_endpoint_returns_not_found(self) -> None:
+        server._shutdown_secret = None
+
+        response = await server._shutdown_server(self._request("Bearer unused"))
+
+        self.assertEqual(response.status_code, 404)
+        self.assertIsNone(response.background)
+
+    async def test_missing_or_invalid_secret_is_rejected(self) -> None:
+        server._shutdown_secret = "correct-secret"
+        for authorization in (None, "Basic correct-secret", "Bearer wrong-secret"):
+            with self.subTest(authorization=authorization):
+                response = await server._shutdown_server(self._request(authorization))
+                self.assertEqual(response.status_code, 401)
+                self.assertIsNone(response.background)
+
+    async def test_valid_secret_schedules_process_termination(self) -> None:
+        server._shutdown_secret = "correct-secret"
+        with patch.object(server, "_terminate_server") as terminate_server:
+            response = await server._shutdown_server(self._request("Bearer correct-secret"))
+            self.assertEqual(response.status_code, 202)
+            self.assertEqual(json.loads(response.body), {"status": "shutting_down"})
+            self.assertIsNotNone(response.background)
+            assert response.background is not None
+            await response.background()
+        terminate_server.assert_called_once_with()
+
+    def test_shutdown_secret_is_written_atomically_with_owner_only_permissions(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            secret_path = Path(tmpdir) / "shutdown-token"
+            secret_path.write_text("stale-secret\n", encoding="utf-8")
+            secret_path.chmod(0o644)
+
+            server._write_shutdown_secret(secret_path, "fresh-secret")
+
+            self.assertEqual(secret_path.read_text(encoding="utf-8"), "fresh-secret\n")
+            self.assertEqual(secret_path.stat().st_mode & 0o777, 0o600)
+
+    def test_main_rejects_shutdown_secret_file_outside_http_mode(self) -> None:
+        argv = ["audithub-mcp", "--shutdown-secret-file", "/tmp/shutdown-token"]
+        with (
+            patch.dict(os.environ, _FULL_ENV, clear=True),
+            patch.object(sys, "argv", argv),
+            self.assertRaises(SystemExit) as cm,
+        ):
+            server.main()
+        self.assertEqual(cm.exception.code, 2)
+
+    def test_main_generates_secret_and_enables_http_shutdown(self) -> None:
+        allow_env = {
+            "AH_ALLOWED_ORG_IDS": "1",
+            "AH_ALLOWED_PROJECT_IDS": "10",
+            **_FULL_ENV,
+        }
+        with TemporaryDirectory() as tmpdir:
+            secret_path = Path(tmpdir) / "shutdown-token"
+            argv = [
+                "audithub-mcp",
+                "--local-http-server",
+                "--local-http-port",
+                "8080",
+                "--shutdown-secret-file",
+                str(secret_path),
+            ]
+            with (
+                patch.dict(os.environ, allow_env, clear=True),
+                patch.object(sys, "argv", argv),
+                patch.object(server.secrets, "token_urlsafe", return_value="generated-secret"),
+                patch.object(server.mcp, "run") as run_server,
+            ):
+                server.main()
+
+            self.assertEqual(secret_path.read_text(encoding="utf-8"), "generated-secret\n")
+            run_server.assert_called_once_with(transport="streamable-http")
+            self.assertIsNone(server._shutdown_secret)
 
 
 class TestRunTool(unittest.IsolatedAsyncioTestCase):

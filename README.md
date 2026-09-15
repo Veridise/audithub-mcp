@@ -136,6 +136,10 @@ configuration file.
 
 All tools return typed Python objects backed by `audithub-sdk` models.
 
+The optional authenticated `POST /shutdown` operational route is deliberately not an MCP tool
+and never appears in tool discovery. It is enabled only for local HTTP mode when
+`--shutdown-secret-file PATH` is supplied; see [the configuration guide](./docs/configuration.md#local-http-shutdown).
+
 The objects returned by `get_organizations`, `get_projects`, and `get_versions`
 only exposes items belonging to organizations/projects on the configured
 allowlists.
