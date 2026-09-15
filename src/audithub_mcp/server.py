@@ -14,7 +14,11 @@ import asyncio
 import base64
 import inspect
 import json
+import os
+import secrets
+import signal
 import sys
+import tempfile
 import time
 import urllib.request
 from collections.abc import Awaitable, Callable, Mapping, Sequence
@@ -56,6 +60,9 @@ from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 from mcp.shared.exceptions import McpError
 from pydantic import Field, TypeAdapter, ValidationError
+from starlette.background import BackgroundTask
+from starlette.requests import Request
+from starlette.responses import JSONResponse, Response
 
 from audithub_mcp import config as server_config
 from audithub_mcp import paql, parse_fio_logs, vanguard
@@ -127,6 +134,8 @@ __all__ = [
 
 mcp = FastMCP("audithub-mcp")
 mcp._mcp_server.experimental.enable_tasks()
+
+_shutdown_secret: str | None = None
 
 _VANGUARD_CUSTOM_DETECTOR_DOCS_RESOURCE_URI = "docs://vanguard/custom-detectors"
 _VANGUARD_CUSTOM_DETECTOR_DOCS = {
@@ -368,14 +377,110 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--local-http-server",
         action="store_true",
-        help="List all registered MCP tools and their schemas, then exit.",
+        help="Run a local Streamable HTTP server instead of using stdio.",
     )
     parser.add_argument(
         "--local-http-port",
         type=int,
-        help="List all registered MCP tools and their schemas, then exit.",
+        help="Port for the local Streamable HTTP server.",
+    )
+    parser.add_argument(
+        "--shutdown-secret-file",
+        metavar="PATH",
+        help=(
+            "Generate a shutdown secret at PATH and enable POST /shutdown; "
+            "valid only in local HTTP mode."
+        ),
     )
     return parser
+
+
+def _write_shutdown_secret(path: Path, secret: str) -> None:
+    """Atomically write a process shutdown secret with owner-only permissions."""
+    if not path.parent.is_dir():
+        raise RuntimeError(f"Shutdown secret directory does not exist: {path.parent}")
+
+    file_descriptor, temporary_path_text = tempfile.mkstemp(
+        dir=path.parent,
+        prefix=f".{path.name}.",
+    )
+    temporary_path = Path(temporary_path_text)
+    try:
+        os.fchmod(file_descriptor, 0o600)
+        output_file = os.fdopen(file_descriptor, "w", encoding="utf-8")
+        file_descriptor = -1
+        with output_file:
+            output_file.write(f"{secret}\n")
+            output_file.flush()
+            os.fsync(output_file.fileno())
+        temporary_path.replace(path)
+    except Exception:
+        if file_descriptor >= 0:
+            os.close(file_descriptor)
+        temporary_path.unlink(missing_ok=True)
+        raise
+
+
+def _terminate_server() -> None:
+    """Ask the current process to follow its normal SIGTERM shutdown path."""
+    os.kill(os.getpid(), signal.SIGTERM)
+
+
+async def _shutdown_server(request: Request) -> Response:
+    """Authenticate and schedule graceful shutdown of the HTTP server process."""
+    if _shutdown_secret is None:
+        return JSONResponse({"detail": "Not found"}, status_code=404)
+
+    authorization = request.headers.get("authorization", "")
+    scheme, separator, supplied_secret = authorization.partition(" ")
+    if (
+        separator == ""
+        or scheme.casefold() != "bearer"
+        or not secrets.compare_digest(supplied_secret, _shutdown_secret)
+    ):
+        return JSONResponse({"detail": "Unauthorized"}, status_code=401)
+
+    return JSONResponse(
+        {"status": "shutting_down"},
+        status_code=202,
+        background=BackgroundTask(_terminate_server),
+    )
+
+
+mcp.custom_route("/shutdown", methods=["POST"], include_in_schema=False)(_shutdown_server)
+
+
+def _run_local_http_server(
+    *,
+    port: int,
+    shutdown_secret_file: str | None,
+    parser: argparse.ArgumentParser,
+) -> None:
+    """Configure and run the local HTTP transport and optional shutdown endpoint."""
+    global _shutdown_secret
+
+    mcp.settings.host = "0.0.0.0"
+    mcp.settings.port = port
+    transport_security = mcp.settings.transport_security or TransportSecuritySettings()
+    transport_security.allowed_hosts = [
+        "127.0.0.1:*",
+        "localhost:*",
+        "host.docker.internal:*",
+    ]
+    mcp.settings.transport_security = transport_security
+
+    if shutdown_secret_file is not None:
+        shutdown_secret = secrets.token_urlsafe(32)
+        try:
+            _write_shutdown_secret(Path(shutdown_secret_file), shutdown_secret)
+        except (OSError, RuntimeError) as exc:
+            parser.error(str(exc))
+        _shutdown_secret = shutdown_secret
+
+    try:
+        mcp.run(transport="streamable-http")
+    finally:
+        _shutdown_secret = None
 
 
 def _apply_cli_args_to_config(
@@ -1931,8 +2036,12 @@ _mark_wait_for_task_completion_as_task_required()
 
 def main() -> None:
     """Entry point for the ``audithub-mcp`` console script."""
+    global _allowed_org_ids, _allowed_project_ids, _context
+
     parser = _build_arg_parser()
     args, _ = parser.parse_known_args()
+    if args.shutdown_secret_file is not None and not args.local_http_server:
+        parser.error("--shutdown-secret-file requires --local-http-server")
     try:
         if args.list_tools:
             _set_task_runs_enabled(True)
@@ -1945,7 +2054,6 @@ def main() -> None:
     except RuntimeError as exc:
         sys.exit(str(exc))
 
-    global _allowed_org_ids, _allowed_project_ids, _context
     _allowed_org_ids = settings.allowed_org_ids
     _allowed_project_ids = settings.allowed_project_ids
     _set_task_runs_enabled(settings.task_runs_enabled)
@@ -1955,16 +2063,11 @@ def main() -> None:
     if args.local_http_server:
         if not args.local_http_port:
             parser.error("Port is required when server is run in http server mode")
-        mcp.settings.host = "0.0.0.0"
-        mcp.settings.port = args.local_http_port
-        transport_security = mcp.settings.transport_security or TransportSecuritySettings()
-        transport_security.allowed_hosts = [
-            "127.0.0.1:*",
-            "localhost:*",
-            "host.docker.internal:*",
-        ]
-        mcp.settings.transport_security = transport_security
-        mcp.run(transport="streamable-http")
+        _run_local_http_server(
+            port=args.local_http_port,
+            shutdown_secret_file=args.shutdown_secret_file,
+            parser=parser,
+        )
     else:
         mcp.run()
 

@@ -15,10 +15,13 @@ Every server must satisfy four requirements:
 1. **Explicitly scoped tool surface**: every tool must be narrowly scoped and
    documented. Mutation tools must have clear authorization and bounded effects.
 2. **Least-privilege HTTP surface**: expose only the HTTP methods and paths a
-   server needs. Admin endpoints must not be exposed.
-3. **Credential isolation**: secrets come from configuration files or
-   environment variables, read once at startup. Never include credentials in
-   tool output, error messages, or logs.
+   server needs. AuditHub admin endpoints must not be exposed. Local operational
+   endpoints must be opt-in, independently authenticated, and excluded from the
+   MCP tool surface.
+3. **Credential isolation**: credentials come from configuration files or
+   environment variables and are read once at startup. Generated operational
+   secrets are written only to explicitly configured protected files. Never
+   include credentials or secrets in tool output, error messages, or logs.
 4. **ID allowlisting**: access is restricted to explicitly configured IDs, such
    as organization and project IDs.
    Reject disallowed IDs on the client side before making any network request.

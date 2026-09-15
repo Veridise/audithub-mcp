@@ -25,6 +25,36 @@ CLI flags can also override the allowlist and feature toggles after the base set
 Use CLI overrides when you want a temporary change without editing the config file or exporting
 new environment variables.
 
+### Local HTTP Shutdown
+
+Local Streamable HTTP mode can optionally expose an authenticated operational endpoint that
+gracefully exits the server process:
+
+```bash
+audithub-mcp \
+  --local-http-server \
+  --local-http-port 8000 \
+  --shutdown-secret-file /shared/audithub-mcp-shutdown-token
+```
+
+When `--shutdown-secret-file PATH` is supplied, the server generates a fresh random secret at
+startup and atomically writes it to `PATH` with owner-only (`0600`) permissions. The parent
+directory must already exist. Send `POST /shutdown` with the file contents as a bearer token:
+
+```http
+POST /shutdown
+Authorization: Bearer <generated-secret>
+```
+
+An authenticated request returns HTTP 202 and then sends `SIGTERM` to the server process so the
+HTTP runtime can perform graceful shutdown. The route is not an MCP tool and is not included in
+MCP discovery. Without `--shutdown-secret-file`, it returns HTTP 404. The option is rejected
+outside local HTTP mode.
+
+In multi-container deployments, place the output file on a volume mounted only into the MCP
+server and its authorized controller. Do not mount that volume into the agent container. The
+orchestrator remains responsible for its container restart policy after the server exits.
+
 ## Configuration Reference
 
 The JSON and YAML config file uses the same keys listed below. Environment variables use the same
