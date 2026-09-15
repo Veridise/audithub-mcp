@@ -450,6 +450,39 @@ async def _shutdown_server(request: Request) -> Response:
 mcp.custom_route("/shutdown", methods=["POST"], include_in_schema=False)(_shutdown_server)
 
 
+def _run_local_http_server(
+    *,
+    port: int,
+    shutdown_secret_file: str | None,
+    parser: argparse.ArgumentParser,
+) -> None:
+    """Configure and run the local HTTP transport and optional shutdown endpoint."""
+    global _shutdown_secret
+
+    mcp.settings.host = "0.0.0.0"
+    mcp.settings.port = port
+    transport_security = mcp.settings.transport_security or TransportSecuritySettings()
+    transport_security.allowed_hosts = [
+        "127.0.0.1:*",
+        "localhost:*",
+        "host.docker.internal:*",
+    ]
+    mcp.settings.transport_security = transport_security
+
+    if shutdown_secret_file is not None:
+        shutdown_secret = secrets.token_urlsafe(32)
+        try:
+            _write_shutdown_secret(Path(shutdown_secret_file), shutdown_secret)
+        except (OSError, RuntimeError) as exc:
+            parser.error(str(exc))
+        _shutdown_secret = shutdown_secret
+
+    try:
+        mcp.run(transport="streamable-http")
+    finally:
+        _shutdown_secret = None
+
+
 def _apply_cli_args_to_config(
     config: AuditHubServerConfig, args: argparse.Namespace
 ) -> AuditHubServerConfig:
@@ -2003,7 +2036,7 @@ _mark_wait_for_task_completion_as_task_required()
 
 def main() -> None:
     """Entry point for the ``audithub-mcp`` console script."""
-    global _allowed_org_ids, _allowed_project_ids, _context, _shutdown_secret
+    global _allowed_org_ids, _allowed_project_ids, _context
 
     parser = _build_arg_parser()
     args, _ = parser.parse_known_args()
@@ -2030,25 +2063,11 @@ def main() -> None:
     if args.local_http_server:
         if not args.local_http_port:
             parser.error("Port is required when server is run in http server mode")
-        mcp.settings.host = "0.0.0.0"
-        mcp.settings.port = args.local_http_port
-        transport_security = mcp.settings.transport_security or TransportSecuritySettings()
-        transport_security.allowed_hosts = [
-            "127.0.0.1:*",
-            "localhost:*",
-            "host.docker.internal:*",
-        ]
-        mcp.settings.transport_security = transport_security
-        if args.shutdown_secret_file is not None:
-            _shutdown_secret = secrets.token_urlsafe(32)
-            try:
-                _write_shutdown_secret(Path(args.shutdown_secret_file), _shutdown_secret)
-            except (OSError, RuntimeError) as exc:
-                parser.error(str(exc))
-        try:
-            mcp.run(transport="streamable-http")
-        finally:
-            _shutdown_secret = None
+        _run_local_http_server(
+            port=args.local_http_port,
+            shutdown_secret_file=args.shutdown_secret_file,
+            parser=parser,
+        )
     else:
         mcp.run()
 
