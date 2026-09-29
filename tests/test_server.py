@@ -529,6 +529,28 @@ class TestCtxCache(unittest.TestCase):
         finally:
             server._set_version_creation_enabled(False)
 
+    def test_main_enables_custom_detector_upload_from_cli_flag(self) -> None:
+        allow_env = {
+            "AH_ALLOWED_ORG_IDS": "1",
+            "AH_ALLOWED_PROJECT_IDS": "10",
+            **_FULL_ENV,
+        }
+        server._context = None
+        argv = ["audithub-mcp", "--enable-edit-custom-detectors"]
+        try:
+            with (
+                patch.dict(os.environ, allow_env, clear=True),
+                patch.object(sys, "argv", argv),
+                patch.object(server.mcp, "run"),
+            ):
+                server.main()
+            self.assertTrue(server._edit_custom_detectors_enabled)
+            self.assertTrue(server._is_tool_registered("upload_custom_detector"))
+            self.assertFalse(server._task_runs_enabled)
+            self.assertFalse(server._version_creation_enabled)
+        finally:
+            server._set_edit_custom_detectors_enabled(False)
+
     def test_main_loads_settings_from_config_file_and_env_overrides(self) -> None:
         config_path = Path(__file__).with_name("dummy_config.yaml")
         env = {
