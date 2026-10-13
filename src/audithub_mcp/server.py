@@ -293,6 +293,7 @@ def _assert_edit_custom_detectors_enabled() -> None:
     if not _edit_custom_detectors_enabled:
         raise RuntimeError(
             "AuditHub custom detector uploads are disabled. Restart the server with "
+            "--enable-edit-custom-detectors or "
             "capabilities.edit_custom_detectors: true in the config file to enable "
             "upload_custom_detector."
         )
@@ -368,6 +369,11 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         "--enable-version-creation",
         action="store_true",
         help="Register opt-in mutation tools that can create AuditHub project versions.",
+    )
+    parser.add_argument(
+        "--enable-edit-custom-detectors",
+        action="store_true",
+        help="Register the opt-in tool that can create or update custom detectors.",
     )
     parser.add_argument(
         "--list-tools",
@@ -507,7 +513,9 @@ def _apply_cli_args_to_config(
         allowed_project_ids=allowed_project_ids,
         task_runs_enabled=config.task_runs_enabled or args.enable_task_runs,
         version_creation_enabled=config.version_creation_enabled or args.enable_version_creation,
-        edit_custom_detectors_enabled=config.edit_custom_detectors_enabled,
+        edit_custom_detectors_enabled=(
+            config.edit_custom_detectors_enabled or args.enable_edit_custom_detectors
+        ),
     )
 
 

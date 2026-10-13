@@ -21,6 +21,7 @@ CLI flags can also override the allowlist and feature toggles after the base set
 - `--allowed-project-ids`
 - `--enable-task-runs`
 - `--enable-version-creation`
+- `--enable-edit-custom-detectors`
 
 Use CLI overrides when you want a temporary change without editing the config file or exporting
 new environment variables.
@@ -134,6 +135,7 @@ appropriate `capabilities` options.
   - `edit_custom_detectors` (boolean)
     - Set to `true` to enable `upload_custom_detector` for organization-level custom
       detectors. Default: `false`.
+    - Command-line override: `--enable-edit-custom-detectors`.
     - The tool accepts inline detector source text via `contents`. A local `file_path`
       remains available for same-machine workflows, but remote MCP clients should pass
       the detector text directly.

@@ -133,6 +133,7 @@ configuration file.
 | `run_defi_vanguard_task` | Start a DeFi Vanguard task for a project version; registered only when task runs are explicitly enabled |
 | `create_version_from_file` | Create a project version by uploading a local `.zip` archive; registered only when version creation is explicitly enabled |
 | `create_version_from_url` | Create a project version from a git repository or archive URL; registered only when version creation is explicitly enabled |
+| `upload_custom_detector` | Create or update an organization-level custom detector; registered only when custom detector editing is explicitly enabled |
 
 All tools return typed Python objects backed by `audithub-sdk` models.
 
@@ -158,6 +159,7 @@ allowlists.
 - **Opt-in DeFi Vanguard task execution.** The `run_defi_vanguard_task` mutation tool is registered under the same task-run opt-in gate. Its inputs are flattened at the top level: `organization_id`, `project_id`, `version_id`, detector selections, and the runtime options. Pass detector selections as two-item JSON arrays `[type, id]`, where builtin selectors use a built-in detector code from `get_defi_vanguard_detectors`, and custom selectors use the catalog id shown by the same tool. The server resolves those selections through the backend detector catalog before calling the generated DeFi Vanguard v2 POST endpoint.
 - **On-chain OrCa mode.** When launching OrCa against already deployed contracts, pass `deployment_info_file` as a path ending in `.deployment.json`. The server normalizes that into `on_chain=True` and rejects mismatched paths early so callers do not accidentally launch a local Foundry-style run.
 - **Opt-in version creation.** The `create_version_from_url` mutation tool is registered only when `AH_ENABLE_VERSION_CREATION=1` or `--enable-version-creation` is supplied. It calls the generated project version URL POST endpoint through `audithub-sdk`.
+- **Opt-in custom detector editing.** The `upload_custom_detector` mutation tool is registered only when `capabilities.edit_custom_detectors: true` is set in the config file or `--enable-edit-custom-detectors` is supplied.
 - **Local findings parsing.** The `parse_findings_from_task_log` utility tool reads one or more local task log files, extracts findings with the shared log parser, and writes a JSON file containing the parsed findings plus the total finding count and per-log counts. It does not call the AuditHub API.
 - **Local PAQL validation.** The `validate_paql` utility tool runs the bundled PAQL WebAssembly
   module with the uv-installed Node.js runtime, invokes it directly without a shell, and does
