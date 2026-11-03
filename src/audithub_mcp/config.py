@@ -43,11 +43,13 @@ class AuditHubServerConfig:
     task_runs_enabled: bool
     version_creation_enabled: bool
     edit_custom_detectors_enabled: bool
+    draft_issue_creation_enabled: bool = False
 
 
 class CapabilitiesConfig(BaseModel):
     """Opt-in capability toggles loaded from file-backed or env-backed sources."""
 
+    draft_issue_creation: bool = False
     task_runs: bool = False
     version_creation: bool = False
     edit_custom_detectors: bool = False
@@ -98,6 +100,10 @@ def update_input_config_from_env(config: AuditHubInputConfig) -> None:
                 os.environ["AH_ALLOWED_PROJECT_IDS"],
                 "--allowed-project-ids / AH_ALLOWED_PROJECT_IDS",
             )
+        )
+    if "AH_ENABLE_DRAFT_ISSUE_CREATION" in os.environ:
+        config.capabilities.draft_issue_creation = _parse_bool_flag(
+            os.environ.get("AH_ENABLE_DRAFT_ISSUE_CREATION"), "AH_ENABLE_DRAFT_ISSUE_CREATION"
         )
     if "AH_ENABLE_TASK_RUNS" in os.environ:
         config.capabilities.task_runs = _parse_bool_flag(
@@ -195,6 +201,7 @@ def load_config_from_path(
     except Exception as exc:
         raise StartupConfigError(f"Invalid config file {path}: {exc}") from exc
     return AuditHubServerConfig(
+        draft_issue_creation_enabled=input_config.capabilities.draft_issue_creation,
         context=_build_context(input_config),
         allowed_org_ids=frozenset(input_config.allowed_org_ids),
         allowed_project_ids=frozenset(input_config.allowed_project_ids),
@@ -218,6 +225,7 @@ def load_config_from_env() -> AuditHubServerConfig:
     update_input_config_from_env(input_config)
     input_config = AuditHubInputConfig.model_validate(input_config.model_dump())
     return AuditHubServerConfig(
+        draft_issue_creation_enabled=input_config.capabilities.draft_issue_creation,
         context=_build_context(input_config),
         allowed_org_ids=frozenset(input_config.allowed_org_ids),
         allowed_project_ids=frozenset(input_config.allowed_project_ids),

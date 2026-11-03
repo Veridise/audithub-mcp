@@ -3,11 +3,13 @@
 from typing import Annotated, Literal
 
 from audithub_sdk.models.comment import Comment
+from audithub_sdk.models.finding_reference import FindingReference
 from audithub_sdk.models.fio_data import FIOData
 from audithub_sdk.models.issue_details import IssueDetails
 from audithub_sdk.models.issue_for_list import IssueForList
 from audithub_sdk.models.my_organization import MyOrganization
 from audithub_sdk.models.project import Project
+from audithub_sdk.models.source_reference import SourceReference
 from audithub_sdk.models.task import Task
 from audithub_sdk.models.task_creation import TaskCreation
 from audithub_sdk.models.thread import Thread
@@ -479,3 +481,22 @@ __all__ = [
     "VersionFromFileInput",
     "VersionFromUrlInput",
 ]
+
+
+class DraftIssueInput(BaseModel):
+    """Issue content only; workflow and visibility controls are forbidden."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    title: Annotated[str, Field(min_length=1)]
+    description: str
+    raised_by: Annotated[list[str], Field(min_length=1)]
+    affected_files: Annotated[list[SourceReference], Field(min_length=1)]
+    likelihood: int
+    impact: int
+    severity: int
+    type: list[int] = Field(default_factory=list)
+    promoted_findings: list[FindingReference] = Field(default_factory=list)
+    candidate_for_tool: list[int] = Field(default_factory=list)
+    poc_author: list[str] = Field(default_factory=list)
+    document_authors: list[str] = Field(default_factory=list)
