@@ -36,6 +36,15 @@ uv tool install 'git+https://github.com/Veridise/audithub-mcp'
 audithub-mcp --help
 ```
 
+AuditHub MCP uses the MCP Python SDK v2 API (`mcp>=2.3.0,<3`). To replace an
+older installation, including one installed with an explicit `mcp<2` constraint,
+install the updated checkout from its repository root:
+
+```bash
+uv tool install --force .
+audithub-mcp --help
+```
+
 ### Local Clone
 
 From the repo root:
@@ -119,7 +128,7 @@ configuration file.
 | `get_task_artifact` | Fetch a task artifact by ID as base64-encoded content |
 | `get_task_logs` | Get logs for one or more steps of a task and write each result to a local output file |
 | `get_task_findings` | Fetch findings for a task and write them to a local output file |
-| `wait_for_task_completion` | Poll a task until no pending steps remain or the timeout is reached, then return the latest task snapshot and completion state; with no timeout, task-capable clients can invoke it as a task |
+| `wait_for_task_completion` | Poll a task until no pending steps remain or the timeout is reached, then return the latest task snapshot and completion state |
 | `parse_findings_from_task_log` | Parse one or more task log files into JSON containing findings plus counts written to a local absolute output path |
 | `validate_paql` | Parse a PAQL pattern or Luau query definition with the bundled WebAssembly PAQL validator; optionally typecheck it against the configured dialect |
 | `get_version_comments` | Get comments for a specific project version |
@@ -154,7 +163,7 @@ allowlists.
 ## Security Model
 
 - **Read-only by default.** Default tools are named `get_*` and only invoke generated `audithub-sdk` GET endpoints.
-- **Task completion polling.** `wait_for_task_completion` repeatedly fetches task details until no pending steps remain or the timeout is reached, then returns the latest sanitized `Task` snapshot with a boolean completion flag. When called with no timeout by a task-capable client, it can run as a task instead of blocking the request.
+- **Task completion polling.** `wait_for_task_completion` repeatedly fetches task details until no pending steps remain or the timeout is reached, then returns the latest sanitized `Task` snapshot with a boolean completion flag. Set `timeout` below the client's tool call timeout and repeat the call while `is_completed` is false. Omitting `timeout` waits inline until completion. MCP SDK v2 removed the experimental background-task runtime; AuditHub task creation and polling remain available.
 - **Opt-in OrCa task execution.** The `run_orca_task` mutation tool is registered only when `AH_ENABLE_TASK_RUNS=1` or `--enable-task-runs` is supplied. It calls the generated OrCa POST endpoint through `audithub-sdk`.
 - **Opt-in DeFi Vanguard task execution.** The `run_defi_vanguard_task` mutation tool is registered under the same task-run opt-in gate. Its inputs are flattened at the top level: `organization_id`, `project_id`, `version_id`, detector selections, and the runtime options. Pass detector selections as two-item JSON arrays `[type, id]`, where builtin selectors use a built-in detector code from `get_defi_vanguard_detectors`, and custom selectors use the catalog id shown by the same tool. The server resolves those selections through the backend detector catalog before calling the generated DeFi Vanguard v2 POST endpoint.
 - **On-chain OrCa mode.** When launching OrCa against already deployed contracts, pass `deployment_info_file` as a path ending in `.deployment.json`. The server normalizes that into `on_chain=True` and rejects mismatched paths early so callers do not accidentally launch a local Foundry-style run.
