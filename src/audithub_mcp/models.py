@@ -14,7 +14,7 @@ from audithub_sdk.models.task import Task
 from audithub_sdk.models.task_creation import TaskCreation
 from audithub_sdk.models.thread import Thread
 from audithub_sdk.models.version import Version
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
 _PositiveId = Annotated[int, Field(strict=True, gt=0)]
 
@@ -483,6 +483,9 @@ __all__ = [
 ]
 
 
+IssueTypeReference = int | Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+
+
 class DraftIssueInput(BaseModel):
     """Issue content only; workflow and visibility controls are forbidden."""
 
@@ -495,7 +498,13 @@ class DraftIssueInput(BaseModel):
     likelihood: int
     impact: int
     severity: int
-    type: list[int] = Field(default_factory=list)
+    type: list[IssueTypeReference] = Field(
+        default_factory=list,
+        description=(
+            "Existing issue type IDs or names. Names are matched exactly after trimming "
+            "surrounding whitespace; missing names are created in the organization first."
+        ),
+    )
     promoted_findings: list[FindingReference] = Field(default_factory=list)
     candidate_for_tool: list[int] = Field(default_factory=list)
     poc_author: list[str] = Field(default_factory=list)

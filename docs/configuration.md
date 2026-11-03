@@ -164,12 +164,20 @@ It is disabled by default and enforces both organization and project allowlists.
 The tool accepts `organization_id`, `project_id`, and `issue_input` containing
 title, description, raised_by, affected_files, likelihood, impact, and severity.
 Classification values are AuditHub configuration IDs. Optional lists are type,
-promoted_findings, candidate_for_tool, poc_author, and document_authors.
+promoted_findings, candidate_for_tool, poc_author, and document_authors. The `type`
+list accepts existing IDs, names, or a mixture, for example
+`"type": [1, "Access Control", "Custom Category"]`. Names are matched exactly
+(case-sensitive) against the organization's types after trimming surrounding
+whitespace. Empty names are rejected. Missing names are created in the organization
+before draft creation, and their returned IDs are attached to the issue. Repeated
+names create at most one type per call. Numeric IDs retain their existing behavior.
 The result contains the new issue ID and the API message.
 
-Only the issue creation endpoint is called. AuditHub creates issues with auditor-only
+The tool calls the issue creation endpoint and, when names are supplied, the
+organization issue-type listing and creation endpoints. AuditHub creates issues with auditor-only
 visibility; see [Audit Issue Management](https://docs.audithub.dev/saas/guide/pages/projects/project_viewer/audit_issue_management).
 Status and visibility inputs are forbidden. No issue sharing, status update, or
 GitHub export tool is exposed. Publishing requires a separate human workflow.
 Creation is not idempotent: inspect project issues before retrying after an
-ambiguous network failure.
+ambiguous network failure. Newly created organization types remain if a later type
+or draft creation request fails.

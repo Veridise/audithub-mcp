@@ -44,8 +44,10 @@ Every server must satisfy four requirements:
 
 ## Draft-only issues
 
-The opt-in `create_draft_issue` tool calls only the SDK issue creation endpoint,
-whose AuditHub behavior is to create internal issues. Its local input model
+The opt-in `create_draft_issue` tool creates internal issues through the SDK issue
+creation endpoint. Issue types accept existing IDs or names. When names are supplied,
+the tool lists the organization's issue types and creates any missing names through
+the SDK organization issue-type endpoint before creating the draft. Its local input model
 enumerates content fields and rejects extra fields, excluding workflow and
 visibility controls. No issue transition, sharing, or export endpoint is exposed.
 Organization/project allowlists and the capability gate run before network access;
