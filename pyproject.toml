@@ -57,7 +57,7 @@ module = ["audithub_sdk", "audithub_sdk.*", "audithub_sdk_ext"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["tests", "src/audithub_mcp/tests"]
 asyncio_mode = "auto"
 addopts = "-v"
 markers = ["integration: marks tests as integration tests (require live API)"]

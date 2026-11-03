@@ -154,3 +154,22 @@ appropriate `capabilities` options.
         `upload_custom_detector(organization_id=1, contents="...", update=42)`
       - Update detector `42` and rename it:
         `upload_custom_detector(organization_id=1, contents="...", filename="bar.luau", update=42)`
+
+### Draft issue creation
+
+Enable `capabilities.draft_issue_creation: true`, `--enable-draft-issue-creation`,
+or `AH_ENABLE_DRAFT_ISSUE_CREATION=1` to register `create_draft_issue`.
+It is disabled by default and enforces both organization and project allowlists.
+
+The tool accepts `organization_id`, `project_id`, and `issue_input` containing
+title, description, raised_by, affected_files, likelihood, impact, and severity.
+Classification values are AuditHub configuration IDs. Optional lists are type,
+promoted_findings, candidate_for_tool, poc_author, and document_authors.
+The result contains the new issue ID and the API message.
+
+Only the issue creation endpoint is called. AuditHub creates issues with auditor-only
+visibility; see [Audit Issue Management](https://docs.audithub.dev/saas/guide/pages/projects/project_viewer/audit_issue_management).
+Status and visibility inputs are forbidden. No issue sharing, status update, or
+GitHub export tool is exposed. Publishing requires a separate human workflow.
+Creation is not idempotent: inspect project issues before retrying after an
+ambiguous network failure.

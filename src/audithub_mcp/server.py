@@ -42,6 +42,8 @@ from audithub_sdk.models.hint_ad_hoc import HintAdHoc
 from audithub_sdk.models.hint_from_organization_library import HintFromOrganizationLibrary
 from audithub_sdk.models.hint_from_standard_library import HintFromStandardLibrary
 from audithub_sdk.models.hint_from_version import HintFromVersion
+from audithub_sdk.models.id_and_message_response import IdAndMessageResponse
+from audithub_sdk.models.issue_info_base_complete import IssueInfoBaseComplete
 from audithub_sdk.models.or_ca_input import OrCaInput
 from audithub_sdk.models.or_ca_parameters import OrCaParameters
 from audithub_sdk.models.root_model_list_union_hint_from_version_hint_from_standard_library_hint_from_organization_library_hint_ad_hoc_inner import (  # noqa: E501
@@ -72,6 +74,7 @@ from audithub_mcp.models import (
     CustomDetectorUploadResult,
     DefiVanguardV2DetectorSelectionInput,
     DefiVanguardV2TaskInput,
+    DraftIssueInput,
     FindingsParseResult,
     FIOData,
     IssueDetails,
@@ -148,6 +151,7 @@ _VANGUARD_CUSTOM_DETECTOR_DOCS_CACHE: dict[str, str] | None = None
 _context: AuditHubSdkContext | None = None
 _allowed_org_ids: frozenset[int] = frozenset()
 _allowed_project_ids: frozenset[int] = frozenset()
+_draft_issue_creation_enabled = False
 _task_runs_enabled = False
 _version_creation_enabled = False
 _edit_custom_detectors_enabled = False
@@ -239,6 +243,13 @@ def _set_registered_tools_enabled(tools: Sequence[RegisteredTool], enabled: bool
     for tool in tools:
         if _is_tool_registered(tool.name):
             mcp.remove_tool(tool.name)
+
+
+def _set_draft_issue_creation_enabled(enabled: bool) -> None:
+    """Enable or disable the draft-only issue creation tool."""
+    global _draft_issue_creation_enabled
+    _draft_issue_creation_enabled = enabled
+    _set_registered_tools_enabled(_DRAFT_ISSUE_CREATION_TOOLS, enabled)
 
 
 def _set_task_runs_enabled(enabled: bool) -> None:
@@ -358,6 +369,11 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         "--no-env-config",
         action="store_true",
         help="Do not allow environment variables to override config file settings",
+    )
+    parser.add_argument(
+        "--enable-draft-issue-creation",
+        action="store_true",
+        help="Register the opt-in tool that creates draft issues only.",
     )
     parser.add_argument(
         "--enable-task-runs",
@@ -507,6 +523,9 @@ def _apply_cli_args_to_config(
         )
     )
     return AuditHubServerConfig(
+        draft_issue_creation_enabled=(
+            config.draft_issue_creation_enabled or args.enable_draft_issue_creation
+        ),
         context=config.context,
         allowed_org_ids=allowed_org_ids,
         allowed_project_ids=allowed_project_ids,
@@ -1722,6 +1741,46 @@ async def run_defi_vanguard_task(
     )
 
 
+async def create_draft_issue(
+    organization_id: _AhId,
+    project_id: _AhId,
+    issue_input: DraftIssueInput,
+) -> IdAndMessageResponse:
+    """Create an internal draft issue. Cannot share, publish, or change issue status.
+
+    Use classification IDs from AuditHub configuration. Creation is not idempotent;
+    check project issues before retrying an ambiguous failure.
+    """
+
+    async def _run() -> IdAndMessageResponse:
+        if not _draft_issue_creation_enabled:
+            raise RuntimeError(
+                "Draft issue creation is disabled. Enable --enable-draft-issue-creation "
+                "or capabilities.draft_issue_creation."
+            )
+        _assert_org_allowed(organization_id)
+        _assert_project_allowed(project_id)
+        # This endpoint creates auditor-only drafts. Never call a workflow,
+        # visibility, update, or GitHub export endpoint from this tool.
+        payload = IssueInfoBaseComplete.model_validate(issue_input.model_dump())
+        result = await _with_api_client(
+            lambda client: IssuesApi(
+                client
+            ).post_issue_organizations_organization_id_projects_project_id_issues_post(
+                organization_id=organization_id,
+                project_id=project_id,
+                issue_info_base_complete=payload,
+            )
+        )
+        return IdAndMessageResponse.model_validate(result)
+
+    return await _run_tool(
+        _run,
+        tool_name="create_draft_issue",
+        safe_args={"organization_id": organization_id, "project_id": project_id},
+    )
+
+
 async def create_version_from_url(
     organization_id: _AhId,
     project_id: _AhId,
@@ -1988,6 +2047,8 @@ _CREATE_VERSION_FROM_FILE_TOOL_NAME = "create_version_from_file"
 _CREATE_VERSION_FROM_URL_TOOL_NAME = "create_version_from_url"
 _UPLOAD_CUSTOM_DETECTOR_TOOL_NAME = "upload_custom_detector"
 
+_DRAFT_ISSUE_CREATION_TOOLS = (RegisteredTool("create_draft_issue", create_draft_issue),)
+
 _TASK_RUN_TOOLS = (
     RegisteredTool(_RUN_ORCA_TASK_TOOL_NAME, run_orca_task),
     RegisteredTool(_RUN_DEFI_VANGUARD_TASK_TOOL_NAME, run_defi_vanguard_task),
@@ -2011,6 +2072,7 @@ def main() -> None:
         parser.error("--shutdown-secret-file requires --local-http-server")
     try:
         if args.list_tools:
+            _set_draft_issue_creation_enabled(True)
             _set_task_runs_enabled(True)
             _set_version_creation_enabled(True)
             _set_edit_custom_detectors_enabled(True)
@@ -2023,6 +2085,7 @@ def main() -> None:
 
     _allowed_org_ids = settings.allowed_org_ids
     _allowed_project_ids = settings.allowed_project_ids
+    _set_draft_issue_creation_enabled(settings.draft_issue_creation_enabled)
     _set_task_runs_enabled(settings.task_runs_enabled)
     _set_version_creation_enabled(settings.version_creation_enabled)
     _set_edit_custom_detectors_enabled(settings.edit_custom_detectors_enabled)

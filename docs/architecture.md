@@ -41,3 +41,12 @@ Every server must satisfy four requirements:
    as organization and project IDs.
    Reject disallowed IDs on the client side before making any network request.
    Error messages must not enumerate the full allowlist.
+
+## Draft-only issues
+
+The opt-in `create_draft_issue` tool calls only the SDK issue creation endpoint,
+whose AuditHub behavior is to create internal issues. Its local input model
+enumerates content fields and rejects extra fields, excluding workflow and
+visibility controls. No issue transition, sharing, or export endpoint is exposed.
+Organization/project allowlists and the capability gate run before network access;
+audit logs record IDs only.
