@@ -31,6 +31,7 @@ from audithub_sdk.api.configuration_api import ConfigurationApi
 from audithub_sdk.api.custom_detectors_org_lib_api import CustomDetectorsOrgLibApi
 from audithub_sdk.api.custom_detectors_std_lib_api import CustomDetectorsStdLibApi
 from audithub_sdk.api.issues_api import IssuesApi
+from audithub_sdk.api.organizations_api import OrganizationsApi
 from audithub_sdk.api.projects_api import ProjectsApi
 from audithub_sdk.api.tasks_api import TasksApi
 from audithub_sdk.api.tools_api import ToolsApi
@@ -44,6 +45,8 @@ from audithub_sdk.models.hint_from_standard_library import HintFromStandardLibra
 from audithub_sdk.models.hint_from_version import HintFromVersion
 from audithub_sdk.models.id_and_message_response import IdAndMessageResponse
 from audithub_sdk.models.issue_info_base_complete import IssueInfoBaseComplete
+from audithub_sdk.models.issue_type import IssueType
+from audithub_sdk.models.issue_type_info import IssueTypeInfo
 from audithub_sdk.models.or_ca_input import OrCaInput
 from audithub_sdk.models.or_ca_parameters import OrCaParameters
 from audithub_sdk.models.root_model_list_union_hint_from_version_hint_from_standard_library_hint_from_organization_library_hint_ad_hoc_inner import (  # noqa: E501
@@ -79,6 +82,7 @@ from audithub_mcp.models import (
     FIOData,
     IssueDetails,
     IssueForList,
+    IssueTypeReference,
     MyOrganization,
     OrCaAdHocHintReference,
     OrCaAdHocSpecReference,
@@ -161,6 +165,7 @@ _comment_ta = TypeAdapter(list[Comment])
 _fio_data_ta = TypeAdapter(list[FIOData])
 _thread_ta = TypeAdapter(list[Thread])
 _issue_list_ta = TypeAdapter(list[IssueForList])
+_issue_types_ta = TypeAdapter(list[IssueType])
 _project_ta = TypeAdapter(list[Project])
 _version_ta = TypeAdapter(list[Version])
 _str_list_ta = TypeAdapter(list[str])
@@ -1741,6 +1746,41 @@ async def run_defi_vanguard_task(
     )
 
 
+async def _resolve_draft_issue_types(
+    client: AuthenticatedApiClient,
+    organization_id: _AhId,
+    references: list[IssueTypeReference],
+) -> list[int]:
+    """Resolve names to organization type IDs, creating missing types once per call."""
+    types_by_name: dict[str, int] = {}
+    if any(isinstance(reference, str) for reference in references):
+        existing_types = await OrganizationsApi(
+            client
+        ).get_organization_issue_types_organizations_organization_id_issue_types_get(
+            organization_id=organization_id
+        )
+        types_by_name = {
+            issue_type.caption: issue_type.id
+            for issue_type in _issue_types_ta.validate_python(existing_types)
+        }
+
+    resolved: list[int] = []
+    for reference in references:
+        if isinstance(reference, int):
+            resolved.append(reference)
+            continue
+        if reference not in types_by_name:
+            result = await OrganizationsApi(
+                client
+            ).post_issue_type_organizations_organization_id_issue_types_post(
+                organization_id=organization_id,
+                issue_type_info=IssueTypeInfo(caption=reference),
+            )
+            types_by_name[reference] = IdAndMessageResponse.model_validate(result).id
+        resolved.append(types_by_name[reference])
+    return resolved
+
+
 async def create_draft_issue(
     organization_id: _AhId,
     project_id: _AhId,
@@ -1748,8 +1788,10 @@ async def create_draft_issue(
 ) -> IdAndMessageResponse:
     """Create an internal draft issue. Cannot share, publish, or change issue status.
 
-    Use classification IDs from AuditHub configuration. Creation is not idempotent;
-    check project issues before retrying an ambiguous failure.
+    Use classification IDs from AuditHub configuration. Issue types also accept
+    names; missing names are created in the organization before the draft.
+    Creation is not idempotent; check project issues before retrying an ambiguous
+    failure. Newly created types remain if subsequent draft creation fails.
     """
 
     async def _run() -> IdAndMessageResponse:
@@ -1762,17 +1804,22 @@ async def create_draft_issue(
         _assert_project_allowed(project_id)
         # This endpoint creates auditor-only drafts. Never call a workflow,
         # visibility, update, or GitHub export endpoint from this tool.
-        payload = IssueInfoBaseComplete.model_validate(issue_input.model_dump())
-        result = await _with_api_client(
-            lambda client: IssuesApi(
+        payload = IssueInfoBaseComplete.model_validate({**issue_input.model_dump(), "type": []})
+
+        async def _create(client: AuthenticatedApiClient) -> IdAndMessageResponse:
+            payload.type = await _resolve_draft_issue_types(
+                client, organization_id, issue_input.type
+            )
+            result = await IssuesApi(
                 client
             ).post_issue_organizations_organization_id_projects_project_id_issues_post(
                 organization_id=organization_id,
                 project_id=project_id,
                 issue_info_base_complete=payload,
             )
-        )
-        return IdAndMessageResponse.model_validate(result)
+            return IdAndMessageResponse.model_validate(result)
+
+        return await _with_api_client(_create)
 
     return await _run_tool(
         _run,
