@@ -24,7 +24,7 @@ import urllib.request
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Annotated, Any, Literal, cast
+from typing import Annotated, Literal
 
 import audithub_sdk
 from audithub_sdk.api.configuration_api import ConfigurationApi
@@ -55,10 +55,10 @@ from audithub_sdk.models.v_spec_from_organization_library import VSpecFromOrgani
 from audithub_sdk.models.v_spec_from_standard_library import VSpecFromStandardLibrary
 from audithub_sdk.models.v_spec_from_version import VSpecFromVersion
 from audithub_sdk_ext import AuthenticatedApiClient, OIDCClientCredentialsContext
-from mcp import types as mcp_types
-from mcp.server.fastmcp import Context, FastMCP
+from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
 from mcp.server.transport_security import TransportSecuritySettings
-from mcp.shared.exceptions import McpError
+from mcp.shared.exceptions import MCPError
 from pydantic import Field, TypeAdapter, ValidationError
 from starlette.background import BackgroundTask
 from starlette.requests import Request
@@ -132,8 +132,7 @@ __all__ = [
     "audithub_sdk",
 ]
 
-mcp = FastMCP("audithub-mcp")
-mcp._mcp_server.experimental.enable_tasks()
+mcp = MCPServer("audithub-mcp")
 
 _shutdown_secret: str | None = None
 
@@ -192,7 +191,7 @@ class RegisteredTool:
 
     #: MCP tool name used for registration and deregistration.
     name: str
-    #: Callable registered with FastMCP for this tool.
+    #: Callable registered with MCPServer for this tool.
     fn: Callable[..., object]
 
 
@@ -465,15 +464,10 @@ def _run_local_http_server(
     """Configure and run the local HTTP transport and optional shutdown endpoint."""
     global _shutdown_secret
 
-    mcp.settings.host = "0.0.0.0"
-    mcp.settings.port = port
-    transport_security = mcp.settings.transport_security or TransportSecuritySettings()
-    transport_security.allowed_hosts = [
-        "127.0.0.1:*",
-        "localhost:*",
-        "host.docker.internal:*",
-    ]
-    mcp.settings.transport_security = transport_security
+    transport_security = TransportSecuritySettings(
+        allowed_hosts=["127.0.0.1:*", "localhost:*", "host.docker.internal:*"],
+        allowed_origins=["http://127.0.0.1:*", "http://localhost:*", "http://[::1]:*"],
+    )
 
     if shutdown_secret_file is not None:
         shutdown_secret = secrets.token_urlsafe(32)
@@ -484,7 +478,12 @@ def _run_local_http_server(
         _shutdown_secret = shutdown_secret
 
     try:
-        mcp.run(transport="streamable-http")
+        mcp.run(
+            transport="streamable-http",
+            host="0.0.0.0",
+            port=port,
+            transport_security=transport_security,
+        )
     finally:
         _shutdown_secret = None
 
@@ -522,7 +521,13 @@ def _apply_cli_args_to_config(
 async def _list_tools() -> None:
     """Print the registered MCP tools and their schemas, then exit."""
     tools = await mcp.list_tools()
-    print(json.dumps([tool.model_dump(mode="json") for tool in tools], indent=2, sort_keys=True))
+    print(
+        json.dumps(
+            [tool.model_dump(mode="json", by_alias=True) for tool in tools],
+            indent=2,
+            sort_keys=True,
+        )
+    )
 
 
 @mcp.resource(
@@ -670,7 +675,7 @@ async def _run_tool[T](
     if tool_name:
         log_call_start(tool_name, safe_args or {})
     start = time.monotonic()
-    sanitized: RuntimeError | None = None
+    sanitized: ToolError | None = None
     try:
         result = fn()
         if inspect.isawaitable(result):
@@ -681,10 +686,8 @@ async def _run_tool[T](
     except RuntimeError as exc:
         if tool_name:
             log_call_error(tool_name, str(exc), (time.monotonic() - start) * 1000)
-        exc.__context__ = None
-        exc.__cause__ = None
-        raise
-    except McpError as exc:
+        sanitized = ToolError(str(exc))
+    except MCPError as exc:
         if tool_name:
             log_call_error(tool_name, str(exc), (time.monotonic() - start) * 1000)
         raise
@@ -697,13 +700,13 @@ async def _run_tool[T](
         )
         if tool_name:
             log_call_error(tool_name, safe_message, elapsed_ms)
-            sanitized = RuntimeError(
+            sanitized = ToolError(
                 "An internal error occurred. Details have been logged."
                 if not isinstance(getattr(exc, "status", None), int)
                 else safe_message
             )
         else:
-            sanitized = RuntimeError(safe_message)
+            sanitized = ToolError(safe_message)
     raise sanitized
 
 
@@ -1011,13 +1014,12 @@ async def wait_for_task_completion(
             gt=0,
             description=(
                 "Maximum number of seconds to wait before stopping polling. "
-                "For an agent with no MCP task protocol support, this should be set to a value "
-                "slightly below the tool call timeout."
+                "Set this slightly below the client's tool call timeout and repeat the call "
+                "if the task is still pending."
             ),
         ),
     ] = None,
-    context: Context[Any, Any, Any] | None = None,
-) -> WaitForTaskCompletionResult | mcp_types.CreateTaskResult:
+) -> WaitForTaskCompletionResult:
     """Poll an AuditHub task until it has no pending steps left or a timeout is reached, then
     return its current task info.
 
@@ -1070,27 +1072,6 @@ async def wait_for_task_completion(
             if remaining <= 0:
                 return WaitForTaskCompletionResult(task=validated_task, is_completed=False)
             await asyncio.sleep(min(_TASK_COMPLETION_POLL_INTERVAL_SECONDS, remaining))
-
-    if context is not None and context.request_context.experimental.is_task and timeout is None:
-        # Task-capable clients can run the indefinite wait as a background task.
-        async def _run_as_task() -> mcp_types.CreateTaskResult:
-            async def _work(task: object) -> mcp_types.CallToolResult:
-                result = await _wait_for_audithub_task_completion()
-                return mcp_types.CallToolResult(content=[], structuredContent=result.model_dump())
-
-            # `experimental.run_task` is typed as `Any` by the MCP library, so cast the
-            # awaited value back to the concrete result type this branch returns.
-            return cast(
-                mcp_types.CreateTaskResult,
-                await context.request_context.experimental.run_task(_work),
-            )
-
-        # Non-task clients fall through to the normal tool return path.
-        return await _run_tool(
-            _run_as_task,
-            tool_name=_WAIT_FOR_TASK_COMPLETION_TOOL_NAME,
-            safe_args={"organization_id": organization_id, "task_id": task_id, "timeout": timeout},
-        )
 
     return await _run_tool(
         _wait_for_audithub_task_completion,
@@ -2018,28 +1999,6 @@ _VERSION_CREATION_TOOLS = (
 _CUSTOM_DETECTOR_UPLOAD_TOOLS = (
     RegisteredTool(_UPLOAD_CUSTOM_DETECTOR_TOOL_NAME, upload_custom_detector),
 )
-
-
-def _mark_wait_for_task_completion_as_task_required() -> None:
-    """Advertise ``wait_for_task_completion`` as task-required in tool listings."""
-    original_handler = mcp._mcp_server.request_handlers[mcp_types.ListToolsRequest]
-
-    async def _handler(request: mcp_types.ListToolsRequest) -> mcp_types.ServerResult:
-        result = await original_handler(request)
-        list_tools_result = result.root
-        if isinstance(list_tools_result, mcp_types.ListToolsResult):
-            for tool in list_tools_result.tools:
-                if tool.name != _WAIT_FOR_TASK_COMPLETION_TOOL_NAME:
-                    continue
-                tool.execution = mcp_types.ToolExecution(taskSupport=mcp_types.TASK_OPTIONAL)
-                mcp._mcp_server._tool_cache[tool.name] = tool
-                break
-        return result
-
-    mcp._mcp_server.request_handlers[mcp_types.ListToolsRequest] = _handler
-
-
-_mark_wait_for_task_completion_as_task_required()
 
 
 def main() -> None:

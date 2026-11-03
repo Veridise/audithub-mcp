@@ -9,18 +9,17 @@ import sys
 import textwrap
 import unittest
 import urllib.error
-from datetime import UTC, datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
-from typing import Any, cast
 from unittest.mock import AsyncMock, patch
 
 from audithub_sdk.models.custom_detector_from_standard_library import (  # noqa: E402
     CustomDetectorFromStandardLibrary,
 )
 from mcp import types as mcp_types
-from mcp.server.fastmcp.exceptions import ResourceError  # noqa: E402
+from mcp.client import Client
+from mcp.server.mcpserver.exceptions import ResourceError, ToolError  # noqa: E402
 from pydantic import ValidationError
 from starlette.requests import Request
 
@@ -603,6 +602,9 @@ class TestCtxCache(unittest.TestCase):
             self.assertIn('"name": "upload_custom_detector"', rendered)
             self.assertIn('"name": "parse_findings_from_task_log"', rendered)
             self.assertNotIn('"name": "shutdown"', rendered)
+            tools = json.loads(rendered)
+            self.assertTrue(all("inputSchema" in tool for tool in tools))
+            self.assertTrue(all("input_schema" not in tool for tool in tools))
             self.assertIsNone(server._context)
         finally:
             server._set_task_runs_enabled(False)
@@ -735,7 +737,15 @@ class TestShutdownEndpoint(unittest.IsolatedAsyncioTestCase):
                 server.main()
 
             self.assertEqual(secret_path.read_text(encoding="utf-8"), "generated-secret\n")
-            run_server.assert_called_once_with(transport="streamable-http")
+            run_server.assert_called_once_with(
+                transport="streamable-http",
+                host="0.0.0.0",
+                port=8080,
+                transport_security=server.TransportSecuritySettings(
+                    allowed_hosts=["127.0.0.1:*", "localhost:*", "host.docker.internal:*"],
+                    allowed_origins=["http://127.0.0.1:*", "http://localhost:*", "http://[::1]:*"],
+                ),
+            )
             self.assertIsNone(server._shutdown_secret)
 
 
@@ -743,22 +753,23 @@ class TestRunTool(unittest.IsolatedAsyncioTestCase):
     async def test_returns_value(self) -> None:
         self.assertEqual(await server._run_tool(lambda: {"ok": True}), {"ok": True})
 
-    async def test_propagates_runtime_error(self) -> None:
+    async def test_exposes_runtime_error_as_tool_error(self) -> None:
         original = RuntimeError("allowlist rejection")
 
         def _raise() -> None:
             raise original
 
-        with self.assertRaises(RuntimeError) as cm:
+        with self.assertRaises(ToolError) as cm:
             await server._run_tool(_raise)
-        self.assertIs(cm.exception, original)
+        self.assertEqual(str(cm.exception), str(original))
+        self.assertIsNone(cm.exception.__cause__)
         self.assertIsNone(cm.exception.__context__)
 
     async def test_sanitizes_non_runtime_error(self) -> None:
         def _raise() -> None:
             raise ValueError("secret token")
 
-        with self.assertRaises(RuntimeError) as cm:
+        with self.assertRaises(ToolError) as cm:
             await server._run_tool(_raise, tool_name="test_tool", safe_args={})
         self.assertEqual(str(cm.exception), "An internal error occurred. Details have been logged.")
         self.assertNotIn("secret token", str(cm.exception))
@@ -779,7 +790,7 @@ class TestReadOnlyToolSurface(unittest.TestCase):
         )
         self.assertEqual(resource.name, "vanguard_custom_detector_docs")
         self.assertEqual(resource.title, "Vanguard custom detector docs")
-        self.assertEqual(resource.mimeType, "application/json")
+        self.assertEqual(resource.mime_type, "application/json")
 
     def test_vanguard_custom_detector_docs_resource_downloads_and_caches_markdown(self) -> None:
         responses = {
@@ -1019,7 +1030,7 @@ class TestToolCalls(unittest.IsolatedAsyncioTestCase):
                 "get_projects_organizations_organization_id_projects_get",
                 mock,
             ),
-            self.assertRaises(RuntimeError),
+            self.assertRaises(ToolError),
         ):
             await server.get_projects(organization_id=1, filter_id=99)
         mock.assert_not_awaited()
@@ -1099,7 +1110,7 @@ class TestToolCalls(unittest.IsolatedAsyncioTestCase):
                 "get_versions_organizations_organization_id_projects_project_id_versions_get",
                 mock,
             ),
-            self.assertRaises(RuntimeError),
+            self.assertRaises(ToolError),
         ):
             await server.get_versions(organization_id=99, project_id=10)
         mock.assert_not_awaited()
@@ -1144,33 +1155,23 @@ class TestToolCalls(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(get_info_mock.await_count, 2)
         sleep_mock.assert_awaited_once()
 
-    async def test_wait_for_task_completion_uses_task_mode_without_timeout(self) -> None:
-        task = mcp_types.Task(
-            taskId="task-99",
-            status="working",
-            createdAt=datetime(2026, 3, 26, 12, 0, tzinfo=UTC),
-            lastUpdatedAt=datetime(2026, 3, 26, 12, 0, tzinfo=UTC),
-            ttl=None,
-            pollInterval=None,
-        )
-        create_task_result = mcp_types.CreateTaskResult(
-            task=task,
-        )
-        run_task_mock = AsyncMock(return_value=create_task_result)
-        context: server.Context[Any, Any, Any] = server.Context(
-            request_context=cast(
-                Any,
-                SimpleNamespace(experimental=SimpleNamespace(is_task=True, run_task=run_task_mock)),
-            )
-        )
-        result = await server.wait_for_task_completion(
-            organization_id=1,
-            task_id=99,
-            context=context,
-        )
-        self.assertIsInstance(result, mcp_types.CreateTaskResult)
-        self.assertEqual(result.task.taskId, "task-99")
-        run_task_mock.assert_awaited_once()
+    async def test_wait_for_task_completion_returns_structured_result_over_mcp(self) -> None:
+        with patch.object(
+            server.TasksApi,
+            "get_info_organizations_organization_id_tasks_task_id_get",
+            AsyncMock(return_value=_TASK_COMPLETED_DICT),
+        ):
+            async with Client(server.mcp) as client:
+                result = await client.call_tool(
+                    "wait_for_task_completion", {"organization_id": 1, "task_id": 99}
+                )
+        self.assertIsInstance(result, mcp_types.CallToolResult)
+        self.assertFalse(result.is_error)
+        parsed = WaitForTaskCompletionResult.model_validate(result.structured_content)
+        self.assertTrue(parsed.is_completed)
+        self.assertEqual(parsed.task.id, _TASK_COMPLETED_DICT["id"])
+        assert parsed.task.artifacts is not None
+        self.assertIsNone(parsed.task.artifacts[0].presigned_url)
 
     async def test_wait_for_task_completion_stops_at_timeout(self) -> None:
         get_info_mock = AsyncMock(return_value=_TASK_PENDING_DICT)
@@ -1197,20 +1198,16 @@ class TestToolCalls(unittest.IsolatedAsyncioTestCase):
         assert sleep_mock.await_args is not None
         self.assertAlmostEqual(sleep_mock.await_args.args[0], 0.04)
 
-    async def test_wait_for_task_completion_is_listed_as_task_optional(self) -> None:
-        request = mcp_types.ListToolsRequest.model_construct(method="tools/list", params=None)
-        result = await server.mcp._mcp_server.request_handlers[mcp_types.ListToolsRequest](request)
-        list_tools_result = result.root
-        assert isinstance(list_tools_result, mcp_types.ListToolsResult)
-        tool = next(
-            tool for tool in list_tools_result.tools if tool.name == "wait_for_task_completion"
-        )
-        self.assertIsNotNone(tool.execution)
-        assert tool.execution is not None
-        self.assertEqual(tool.execution.taskSupport, mcp_types.TASK_OPTIONAL)
-        timeout_property = tool.inputSchema["properties"]["timeout"]
+    async def test_wait_for_task_completion_is_listed_without_background_task_support(self) -> None:
+        async with Client(server.mcp) as client:
+            result = await client.list_tools()
+        tools = result.tools
+        tool = next(tool for tool in tools if tool.name == "wait_for_task_completion")
+        self.assertIsNone(tool.execution)
+        timeout_property = tool.input_schema["properties"]["timeout"]
         self.assertIn("Maximum number of seconds to wait", timeout_property["description"])
-        self.assertNotIn("timeout", tool.inputSchema.get("required", []))
+        self.assertNotIn("timeout", tool.input_schema.get("required", []))
+        self.assertNotIn("context", tool.input_schema["properties"])
 
     async def test_get_task_artifacts_returns_sanitized_metadata(self) -> None:
         with patch.object(
@@ -1257,7 +1254,7 @@ class TestToolCalls(unittest.IsolatedAsyncioTestCase):
                 "get_artifact_organizations_organization_id_tasks_task_id_artifacts_artifact_id_get_with_http_info",  # noqa: E501
                 AsyncMock(return_value=response),
             ),
-            self.assertRaises(RuntimeError) as cm,
+            self.assertRaises(ToolError) as cm,
         ):
             await server.get_task_artifact(
                 organization_id=1,
@@ -1290,7 +1287,7 @@ class TestToolCalls(unittest.IsolatedAsyncioTestCase):
     async def test_get_task_logs_rejects_mismatched_pairs(self) -> None:
         with TemporaryDirectory() as tmpdir:
             output_path = Path(tmpdir) / "task-logs.txt"
-            with self.assertRaises(RuntimeError) as cm:
+            with self.assertRaises(ToolError) as cm:
                 await server.get_task_logs(
                     organization_id=1,
                     task_id=99,
@@ -1403,7 +1400,7 @@ class TestToolCalls(unittest.IsolatedAsyncioTestCase):
                 "post_tool_orca_organizations_organization_id_projects_project_id_versions_version_id_tools_orca_post",  # noqa: E501
                 mock,
             ),
-            self.assertRaises(RuntimeError) as cm,
+            self.assertRaises(ToolError) as cm,
         ):
             await server.run_orca_task(
                 organization_id=1,
@@ -1593,7 +1590,7 @@ class TestToolCalls(unittest.IsolatedAsyncioTestCase):
                 "post_tool_vanguard_v2_organizations_organization_id_projects_project_id_versions_version_id_tools_vanguard_v2_post",
                 mock,
             ),
-            self.assertRaises(RuntimeError) as cm,
+            self.assertRaises(ToolError) as cm,
         ):
             task_input = _vanguard_task_input()
             await server.run_defi_vanguard_task(
@@ -1731,7 +1728,7 @@ class TestToolCalls(unittest.IsolatedAsyncioTestCase):
                 "post_tool_vanguard_v2_organizations_organization_id_projects_project_id_versions_version_id_tools_vanguard_v2_post",
                 mock,
             ),
-            self.assertRaises(RuntimeError) as cm,
+            self.assertRaises(ToolError) as cm,
         ):
             await server.run_defi_vanguard_task(
                 organization_id=1,
@@ -1751,7 +1748,7 @@ class TestToolCalls(unittest.IsolatedAsyncioTestCase):
                 "post_version_with_url_organizations_organization_id_projects_project_id_versions_url_post",  # noqa: E501
                 mock,
             ),
-            self.assertRaises(RuntimeError) as cm,
+            self.assertRaises(ToolError) as cm,
         ):
             await server.create_version_from_url(
                 organization_id=1,
@@ -1774,7 +1771,7 @@ class TestToolCalls(unittest.IsolatedAsyncioTestCase):
                 "_create_version_from_archive_with_client",
                 mock,
             ),
-            self.assertRaises(RuntimeError) as cm,
+            self.assertRaises(ToolError) as cm,
         ):
             await server.create_version_from_file(
                 organization_id=1,
@@ -2088,7 +2085,7 @@ class TestToolCalls(unittest.IsolatedAsyncioTestCase):
             detector_path = Path(tmpdir) / "detector.luau"
             detector_path.write_text("rule body\n", encoding="utf-8")
             with self.assertRaisesRegex(
-                RuntimeError,
+                ToolError,
                 "filename is required when update is not provided",
             ):
                 await server.upload_custom_detector(
@@ -2200,7 +2197,7 @@ class TestToolCalls(unittest.IsolatedAsyncioTestCase):
                 "get_issues_organizations_organization_id_projects_project_id_issues_get",
                 mock,
             ),
-            self.assertRaises(RuntimeError),
+            self.assertRaises(ToolError),
         ):
             await server.get_project_issues(organization_id=99, project_id=10)
         mock.assert_not_awaited()
@@ -2213,7 +2210,7 @@ class TestToolCalls(unittest.IsolatedAsyncioTestCase):
                 "get_projects_organizations_organization_id_projects_get",
                 mock,
             ),
-            self.assertRaises(RuntimeError),
+            self.assertRaises(ToolError),
         ):
             await server.get_projects(organization_id=99)
         mock.assert_not_awaited()
@@ -2226,7 +2223,7 @@ class TestToolCalls(unittest.IsolatedAsyncioTestCase):
                 "get_versions_organizations_organization_id_projects_project_id_versions_get",
                 mock,
             ),
-            self.assertRaises(RuntimeError),
+            self.assertRaises(ToolError),
         ):
             await server.get_versions(organization_id=1, project_id=99)
         mock.assert_not_awaited()
@@ -2239,7 +2236,7 @@ class TestToolCalls(unittest.IsolatedAsyncioTestCase):
                 "get_version_comments_organizations_organization_id_projects_project_id_versions_version_id_comments_get",  # noqa: E501
                 mock,
             ),
-            self.assertRaises(RuntimeError),
+            self.assertRaises(ToolError),
         ):
             await server.get_thread_comments(
                 organization_id=99, project_id=10, version_id=3, thread_id=7
@@ -2253,7 +2250,7 @@ class TestToolCalls(unittest.IsolatedAsyncioTestCase):
                 "get_organizations_users_myorganizations_get",
                 AsyncMock(side_effect=OSError("network secret")),
             ),
-            self.assertRaises(RuntimeError) as cm,
+            self.assertRaises(ToolError) as cm,
         ):
             await server.get_organizations()
         self.assertNotIn("network secret", str(cm.exception))
@@ -2262,7 +2259,7 @@ class TestToolCalls(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(server._normalize_sort_key("  AcMe DAO  "), "acme dao")
 
 
-class TestFastMCPSchemaValidation(unittest.IsolatedAsyncioTestCase):
+class TestMCPServerSchemaValidation(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
         server._allowed_org_ids = frozenset({1})
         server._allowed_project_ids = frozenset({10})
@@ -2275,17 +2272,13 @@ class TestFastMCPSchemaValidation(unittest.IsolatedAsyncioTestCase):
         server._allowed_project_ids = frozenset()
 
     async def test_string_org_id_rejected(self) -> None:
-        from mcp.shared.exceptions import McpError
-
-        with self.assertRaises((McpError, Exception)) as cm:
-            await server.mcp._tool_manager.call_tool("get_projects", {"organization_id": "1"})
+        with self.assertRaises(ToolError) as cm:
+            await server.mcp.call_tool("get_projects", {"organization_id": "1"})
         self.assertIn("validation error", str(cm.exception).lower())
 
     async def test_string_thread_id_rejected(self) -> None:
-        from mcp.shared.exceptions import McpError
-
-        with self.assertRaises((McpError, Exception)) as cm:
-            await server.mcp._tool_manager.call_tool(
+        with self.assertRaises(ToolError) as cm:
+            await server.mcp.call_tool(
                 "get_thread_comments",
                 {
                     "organization_id": 1,

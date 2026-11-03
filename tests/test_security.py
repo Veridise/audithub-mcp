@@ -8,6 +8,10 @@ from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
+from mcp import types as mcp_types
+from mcp.client import Client
+from mcp.server.mcpserver.exceptions import ToolError
+
 import audithub_mcp.server as server  # noqa: E402
 import audithub_mcp.vanguard as vanguard  # noqa: E402
 from audithub_mcp.models import (  # noqa: E402
@@ -58,13 +62,18 @@ class TestDisallowedIds(unittest.IsolatedAsyncioTestCase):
         server._set_edit_custom_detectors_enabled(False)
 
     async def test_get_project_disallowed_org(self) -> None:
-        with self.assertRaises(RuntimeError) as cm:
-            await server.get_projects(organization_id=999, filter_id=10)
-        self.assertIn("999", str(cm.exception))
-        self.assertNotIn("frozenset", str(cm.exception))
+        async with Client(server.mcp) as client:
+            result = await client.call_tool(
+                "get_projects", {"organization_id": 999, "filter_id": 10}
+            )
+        self.assertTrue(result.is_error)
+        content = result.content[0]
+        assert isinstance(content, mcp_types.TextContent)
+        self.assertIn("999", content.text)
+        self.assertNotIn("frozenset", content.text)
 
     async def test_get_projects_disallowed_project(self) -> None:
-        with self.assertRaises(RuntimeError) as cm:
+        with self.assertRaises(ToolError) as cm:
             await server.get_projects(organization_id=1, filter_id=999)
         self.assertIn("999", str(cm.exception))
 
@@ -76,7 +85,7 @@ class TestDisallowedIds(unittest.IsolatedAsyncioTestCase):
                 "get_projects_organizations_organization_id_projects_get",
                 mock,
             ),
-            self.assertRaises(RuntimeError),
+            self.assertRaises(ToolError),
         ):
             await server.get_projects(organization_id=999)
         mock.assert_not_awaited()
@@ -84,7 +93,7 @@ class TestDisallowedIds(unittest.IsolatedAsyncioTestCase):
     async def test_task_findings_disallowed_org(self) -> None:
         with TemporaryDirectory() as tmpdir:
             output_path = Path(tmpdir) / "findings.json"
-            with self.assertRaises(RuntimeError) as cm:
+            with self.assertRaises(ToolError) as cm:
                 await server.get_task_findings(
                     organization_id=999,
                     task_id=10,
@@ -101,7 +110,7 @@ class TestDisallowedIds(unittest.IsolatedAsyncioTestCase):
                 "get_task_findings_organizations_organization_id_tasks_task_id_findings_get",
                 mock,
             ),
-            self.assertRaises(RuntimeError),
+            self.assertRaises(ToolError),
             TemporaryDirectory() as tmpdir,
         ):
             output_path = Path(tmpdir) / "findings.json"
@@ -115,7 +124,7 @@ class TestDisallowedIds(unittest.IsolatedAsyncioTestCase):
     async def test_task_logs_disallowed_org(self) -> None:
         with TemporaryDirectory() as tmpdir:
             output_path = Path(tmpdir) / "logs.txt"
-            with self.assertRaises(RuntimeError) as cm:
+            with self.assertRaises(ToolError) as cm:
                 await server.get_task_logs(
                     organization_id=999,
                     task_id=10,
@@ -151,7 +160,7 @@ class TestDisallowedIds(unittest.IsolatedAsyncioTestCase):
                     "post_custom_detector_organizations_organization_id_custom_detectors_post",
                     mock,
                 ),
-                self.assertRaises(RuntimeError) as cm,
+                self.assertRaises(ToolError) as cm,
             ):
                 await server.upload_custom_detector(
                     organization_id=999,
@@ -163,7 +172,7 @@ class TestDisallowedIds(unittest.IsolatedAsyncioTestCase):
         mock.assert_not_awaited()
 
     async def test_task_artifacts_disallowed_org(self) -> None:
-        with self.assertRaises(RuntimeError) as cm:
+        with self.assertRaises(ToolError) as cm:
             await server.get_task_artifacts(organization_id=999, task_id=10)
         self.assertIn("999", str(cm.exception))
         self.assertNotIn("frozenset", str(cm.exception))
@@ -176,13 +185,13 @@ class TestDisallowedIds(unittest.IsolatedAsyncioTestCase):
                 "get_info_organizations_organization_id_tasks_task_id_get",
                 mock,
             ),
-            self.assertRaises(RuntimeError),
+            self.assertRaises(ToolError),
         ):
             await server.get_task_artifacts(organization_id=999, task_id=10)
         mock.assert_not_awaited()
 
     async def test_wait_for_task_completion_disallowed_org(self) -> None:
-        with self.assertRaises(RuntimeError) as cm:
+        with self.assertRaises(ToolError) as cm:
             await server.wait_for_task_completion(organization_id=999, task_id=10)
         self.assertIn("999", str(cm.exception))
         self.assertNotIn("frozenset", str(cm.exception))
@@ -195,13 +204,13 @@ class TestDisallowedIds(unittest.IsolatedAsyncioTestCase):
                 "get_info_organizations_organization_id_tasks_task_id_get",
                 mock,
             ),
-            self.assertRaises(RuntimeError),
+            self.assertRaises(ToolError),
         ):
             await server.wait_for_task_completion(organization_id=999, task_id=10)
         mock.assert_not_awaited()
 
     async def test_task_artifact_disallowed_org(self) -> None:
-        with self.assertRaises(RuntimeError) as cm:
+        with self.assertRaises(ToolError) as cm:
             await server.get_task_artifact(
                 organization_id=999,
                 task_id=10,
@@ -218,7 +227,7 @@ class TestDisallowedIds(unittest.IsolatedAsyncioTestCase):
                 "get_artifact_organizations_organization_id_tasks_task_id_artifacts_artifact_id_get_with_http_info",  # noqa: E501
                 mock,
             ),
-            self.assertRaises(RuntimeError),
+            self.assertRaises(ToolError),
         ):
             await server.get_task_artifact(
                 organization_id=999,
@@ -228,7 +237,7 @@ class TestDisallowedIds(unittest.IsolatedAsyncioTestCase):
         mock.assert_not_awaited()
 
     async def test_project_name_index_disallowed_org(self) -> None:
-        with self.assertRaises(RuntimeError) as cm:
+        with self.assertRaises(ToolError) as cm:
             await server.get_projects(organization_id=999)
         self.assertIn("999", str(cm.exception))
         self.assertNotIn("frozenset", str(cm.exception))
@@ -241,19 +250,19 @@ class TestDisallowedIds(unittest.IsolatedAsyncioTestCase):
                 "get_projects_organizations_organization_id_projects_get",
                 mock,
             ),
-            self.assertRaises(RuntimeError),
+            self.assertRaises(ToolError),
         ):
             await server.get_projects(organization_id=999)
         mock.assert_not_awaited()
 
     async def test_versions_disallowed_org(self) -> None:
-        with self.assertRaises(RuntimeError) as cm:
+        with self.assertRaises(ToolError) as cm:
             await server.get_versions(organization_id=999, project_id=10)
         self.assertIn("999", str(cm.exception))
         self.assertNotIn("frozenset", str(cm.exception))
 
     async def test_versions_disallowed_project(self) -> None:
-        with self.assertRaises(RuntimeError) as cm:
+        with self.assertRaises(ToolError) as cm:
             await server.get_versions(organization_id=1, project_id=999)
         self.assertIn("999", str(cm.exception))
         self.assertNotIn("frozenset", str(cm.exception))
@@ -266,7 +275,7 @@ class TestDisallowedIds(unittest.IsolatedAsyncioTestCase):
                 "get_versions_organizations_organization_id_projects_project_id_versions_get",
                 mock,
             ),
-            self.assertRaises(RuntimeError),
+            self.assertRaises(ToolError),
         ):
             await server.get_versions(organization_id=999, project_id=10)
         mock.assert_not_awaited()
@@ -280,7 +289,7 @@ class TestDisallowedIds(unittest.IsolatedAsyncioTestCase):
                 "post_tool_orca_organizations_organization_id_projects_project_id_versions_version_id_tools_orca_post",  # noqa: E501
                 mock,
             ),
-            self.assertRaises(RuntimeError) as cm,
+            self.assertRaises(ToolError) as cm,
         ):
             await server.run_orca_task(
                 organization_id=999,
@@ -301,7 +310,7 @@ class TestDisallowedIds(unittest.IsolatedAsyncioTestCase):
                 "post_tool_orca_organizations_organization_id_projects_project_id_versions_version_id_tools_orca_post",  # noqa: E501
                 mock,
             ),
-            self.assertRaises(RuntimeError) as cm,
+            self.assertRaises(ToolError) as cm,
         ):
             await server.run_orca_task(
                 organization_id=1,
@@ -331,7 +340,7 @@ class TestDisallowedIds(unittest.IsolatedAsyncioTestCase):
                 "get_custom_detectors_library_custom_detectors_library_get",
                 stdlib_mock,
             ),
-            self.assertRaises(RuntimeError) as cm,
+            self.assertRaises(ToolError) as cm,
         ):
             await server.get_defi_vanguard_detectors(organization_id=999)
         self.assertIn("999", str(cm.exception))
@@ -348,7 +357,7 @@ class TestDisallowedIds(unittest.IsolatedAsyncioTestCase):
                 "post_tool_vanguard_v2_organizations_organization_id_projects_project_id_versions_version_id_tools_vanguard_v2_post",
                 mock,
             ),
-            self.assertRaises(RuntimeError) as cm,
+            self.assertRaises(ToolError) as cm,
         ):
             task_input = _vanguard_task_input()
             await server.run_defi_vanguard_task(
@@ -375,7 +384,7 @@ class TestDisallowedIds(unittest.IsolatedAsyncioTestCase):
                 "post_tool_vanguard_v2_organizations_organization_id_projects_project_id_versions_version_id_tools_vanguard_v2_post",
                 mock,
             ),
-            self.assertRaises(RuntimeError) as cm,
+            self.assertRaises(ToolError) as cm,
         ):
             task_input = _vanguard_task_input()
             await server.run_defi_vanguard_task(
@@ -402,7 +411,7 @@ class TestDisallowedIds(unittest.IsolatedAsyncioTestCase):
                 "post_version_with_url_organizations_organization_id_projects_project_id_versions_url_post",  # noqa: E501
                 mock,
             ),
-            self.assertRaises(RuntimeError) as cm,
+            self.assertRaises(ToolError) as cm,
         ):
             await server.create_version_from_url(
                 organization_id=999,
@@ -426,7 +435,7 @@ class TestDisallowedIds(unittest.IsolatedAsyncioTestCase):
                 "_create_version_from_archive_with_client",
                 mock,
             ),
-            self.assertRaises(RuntimeError) as cm,
+            self.assertRaises(ToolError) as cm,
         ):
             await server.create_version_from_file(
                 organization_id=999,
@@ -449,7 +458,7 @@ class TestDisallowedIds(unittest.IsolatedAsyncioTestCase):
                 "_create_version_from_archive_with_client",
                 mock,
             ),
-            self.assertRaises(RuntimeError) as cm,
+            self.assertRaises(ToolError) as cm,
         ):
             await server.create_version_from_file(
                 organization_id=1,
@@ -472,7 +481,7 @@ class TestDisallowedIds(unittest.IsolatedAsyncioTestCase):
                 "post_version_with_url_organizations_organization_id_projects_project_id_versions_url_post",  # noqa: E501
                 mock,
             ),
-            self.assertRaises(RuntimeError) as cm,
+            self.assertRaises(ToolError) as cm,
         ):
             await server.create_version_from_url(
                 organization_id=1,
@@ -643,7 +652,7 @@ class TestOrCaTaskPrivacy(unittest.IsolatedAsyncioTestCase):
                 AsyncMock(side_effect=ValueError("SECRET_SPEC_CONTENT SECRET_HINT_CONTENT")),
             ),
             patch.object(audit_mod.logger, "error") as mock_error,
-            self.assertRaises(RuntimeError),
+            self.assertRaises(ToolError),
         ):
             await server.run_orca_task(
                 organization_id=1,
@@ -734,12 +743,28 @@ class TestErrorSanitization(unittest.IsolatedAsyncioTestCase):
         def _raise() -> None:
             raise ValueError("secret=abc123 token=xyz")
 
-        with self.assertRaises(RuntimeError) as cm:
+        with self.assertRaises(ToolError) as cm:
             await server._run_tool(_raise)
         self.assertNotIn("secret=abc123", str(cm.exception))
         self.assertNotIn("token=xyz", str(cm.exception))
         self.assertIsNone(cm.exception.__cause__)
         self.assertIsNone(cm.exception.__context__)
+
+        with patch.object(
+            server,
+            "_with_api_client",
+            AsyncMock(side_effect=ValueError("secret=abc123 token=xyz")),
+        ):
+            async with Client(server.mcp) as client:
+                result = await client.call_tool("get_organizations", {})
+        self.assertTrue(result.is_error)
+        content = result.content[0]
+        assert isinstance(content, mcp_types.TextContent)
+        self.assertEqual(
+            content.text,
+            "Error executing tool get_organizations: "
+            "An internal error occurred. Details have been logged.",
+        )
 
 
 if __name__ == "__main__":
