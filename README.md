@@ -122,6 +122,7 @@ configuration file.
 | `get_organizations` | List allowlisted organizations; pass `details=true` for full organization records and `filter_id` to narrow results |
 | `get_defi_vanguard_detectors` | List all DeFi Vanguard detectors for an organization using the Vanguard listing block format |
 | `get_projects` | List allowlisted projects in an organization; pass `details=true` for full project records and `filter_id` to narrow results |
+| `create_project` | Create a configured project in a write-approved organization, with an initial version from Git (including GitHub), a ZIP URL, a ZIP upload, or a staged source |
 | `get_versions` | List versions for a project; pass `details=true` for full version records, `filter_id` to narrow results, and `latest_only=true` for the latest version only |
 | `get_task_info` | Get status and details for an AuditHub task |
 | `get_task_artifacts` | List sanitized artifact metadata for an AuditHub task |
@@ -139,6 +140,7 @@ configuration file.
 | `get_project_comments` | Get all comments for a project across all versions |
 | `help_context` | Get a prompt/instructions on how agents should use the mcp server |
 | `run_orca_task` | Start an OrCa task for a project version; registered only when task runs are explicitly enabled |
+| `run_scout_task` | Start a Scout source review on an allowlisted project version in a write-approved organization when task runs are enabled |
 | `run_defi_vanguard_task` | Start a DeFi Vanguard task for a project version; registered only when task runs are explicitly enabled |
 | `create_version_from_file` | Create a project version by uploading a local `.zip` archive; registered only when version creation is explicitly enabled |
 | `create_version_from_url` | Create a project version from a git repository or archive URL; registered only when version creation is explicitly enabled |

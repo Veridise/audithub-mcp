@@ -596,6 +596,8 @@ class TestCtxCache(unittest.TestCase):
             mock_run.assert_not_called()
             mock_print.assert_called_once()
             rendered = mock_print.call_args.args[0]
+            self.assertIn('"name": "create_project"', rendered)
+            self.assertIn('"name": "run_scout_task"', rendered)
             self.assertIn('"name": "run_defi_vanguard_task"', rendered)
             self.assertIn('"name": "create_version_from_file"', rendered)
             self.assertIn('"name": "create_version_from_url"', rendered)
@@ -607,6 +609,7 @@ class TestCtxCache(unittest.TestCase):
             self.assertTrue(all("input_schema" not in tool for tool in tools))
             self.assertIsNone(server._context)
         finally:
+            server._set_project_creation_enabled(False)
             server._set_task_runs_enabled(False)
             server._set_version_creation_enabled(False)
             server._set_edit_custom_detectors_enabled(False)

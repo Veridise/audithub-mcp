@@ -18,7 +18,9 @@
 CLI flags can also override the allowlist and feature toggles after the base settings are loaded:
 
 - `--allowed-org-ids`
+- `--writable-org-ids`
 - `--allowed-project-ids`
+- `--enable-project-creation`
 - `--enable-task-runs`
 - `--enable-version-creation`
 - `--enable-edit-custom-detectors`
@@ -109,7 +111,9 @@ and projects that the MCP server provides access to.
     - Environment format: comma-separated positive integers, for example `1,2,3`.
   - Can also be overridden on the command-line using `--allowed-org-ids id1,id2,...`
 - `allowed_project_ids` (array of positive integers)
-  - Non-empty list of project IDs the server may access.
+  - Project IDs the server may access. Use an empty list to create a first project
+    when project creation is enabled for at least one writable organization.
+    Other configurations require at least one project ID.
   - Environment variable: `AH_ALLOWED_PROJECT_IDS`
     - Environment format: comma-separated positive integers, for example `10,20`.
   - Can also be overridden on the command-line using `--allowed-project-ids id1,id2,...`
@@ -122,6 +126,9 @@ appropriate `capabilities` options.
 
 - `capabilities` (object)
   - Optional feature toggles for state-changing features.
+  - `project_creation` (boolean)
+    - Set to `true` to register `create_project`. The default is `false`.
+    - Set `AH_ENABLE_PROJECT_CREATION=1` or pass `--enable-project-creation` to enable it at startup.
   - `task_runs` (boolean)
     - Set to `true` to enable tools for executing AuditHub tasks. Default: `false`.
     - Environment variable: `AH_ENABLE_TASK_RUNS`
@@ -154,6 +161,80 @@ appropriate `capabilities` options.
         `upload_custom_detector(organization_id=1, contents="...", update=42)`
       - Update detector `42` and rename it:
         `upload_custom_detector(organization_id=1, contents="...", filename="bar.luau", update=42)`
+
+### Project creation and Scout reviews
+
+Both tools require the target organization ID in `writable_org_ids`, an optional
+subset of `allowed_org_ids` that defaults to an empty list. Set it in the config
+file, with `AH_WRITABLE_ORG_IDS`, or with `--writable-org-ids`. The environment
+variable and CLI flag accept comma-separated IDs. AuditHub also checks the
+authenticated account's project-creation or Scout task permissions on each request.
+
+```yaml
+allowed_org_ids: [1, 2]
+writable_org_ids: [1]
+allowed_project_ids: [10]
+capabilities:
+  project_creation: true
+  task_runs: true
+```
+
+#### Creating a project
+
+Call `create_project` with these arguments to import a GitHub tag as the project's
+first version.
+
+```json
+{
+  "organization_id": 1,
+  "name": "OpenZeppelin Contracts",
+  "input_info": {
+    "input_type": "git",
+    "url": "https://github.com/OpenZeppelin/openzeppelin-contracts.git",
+    "revision": "v5.0.0",
+    "includes_submodules": true
+  },
+  "version_name": "v5.0.0",
+  "project_root": ".",
+  "src_path": "contracts",
+  "contents": ["solidity"]
+}
+```
+
+| Initial source | Arguments |
+| --- | --- |
+| Git repository | Pass `input_info` with `input_type: "git"` and `url`. Optional `revision` selects a branch, tag, or commit. `includes_submodules` defaults to `false`. |
+| ZIP URL | Pass `"input_info": {"input_type": "archive", "url": "https://example.com/contracts.zip"}`. |
+| ZIP on the MCP server | Pass `"archive": "/absolute/path/contracts.zip"`. |
+| ZIP on a remote MCP client | Pass `archive` as an object with `content_base64` containing the ZIP bytes encoded as base64. The optional `filename` defaults to `sources.zip`. |
+| Already staged in the organization | Pass the string `temp_version_id` and the matching `input_info` from staging. For a staged ZIP upload the default archive source applies. |
+| Empty project | Omit the source and initial version arguments. |
+
+| Project and version settings | Accepted values |
+| --- | --- |
+| `project_root`, `src_path` | Relative paths for the project root and sources. Both default to `.`. |
+| `include_path`, `specs_path`, `hints_path`, `deployment_script_path` | Optional relative paths for includes, specifications, hints, and the deployment script. |
+| `contents` | List of languages from `circom`, `solidity`, `picus`, and `llzk`. |
+| `build_system` | `hardhat`, `hardhat-ignition`, or `foundry`. |
+| `env_vars` | List of objects with string `name` and `value` fields. |
+| `dependencies` | Optional `foundry` boolean and `npm` object. The object takes `tool` (`npm`, `yarn`, or `pnpm`), a `lockfile` boolean, and optional `node_version`. |
+| `version_name` | First version's name. AuditHub defaults to `initial`. |
+| `commit_hash`, `is_deployed` | Metadata for a newly staged source. For Git, `revision` selects the code and AuditHub records the resolved commit. An existing staged version carries its own metadata. |
+
+The result contains the new project ID in `id`. Add it to `allowed_project_ids` and
+restart the server to access it through project-scoped tools. If staging succeeds
+and project creation returns an error, the tool reports the temporary ID. Check
+whether AuditHub created the project before retrying. If it has not, pass that ID
+and the same source description to reuse the staged version.
+
+#### Starting a Scout review
+
+`run_scout_task(organization_id=1, project_id=10, version_id=42, budget="standard")`
+submits a Scout (AuditHub Agent) source review and returns its `task_id`. Supply
+a budget class available to the organization. Pass an optional `name` or use
+`input_limit` to select source files by path relative to the version root.
+Scout submits the review with proof-of-concept generation disabled. Use
+`get_task_info` or `wait_for_task_completion` to follow the run.
 
 ### Draft issue creation
 
