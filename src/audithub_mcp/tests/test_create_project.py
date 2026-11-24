@@ -3,10 +3,11 @@
 import base64
 import json
 import logging
+import os
 import sys
 from dataclasses import replace
 from pathlib import Path
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, Mock, patch
 from urllib.parse import parse_qsl
 from zipfile import ZipFile
 
@@ -110,7 +111,7 @@ async def test_sdk_requests_and_remote_authorization(
         assert private not in caplog.text
 
 
-def test_write_configuration(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_write_configuration(tmp_path: Path) -> None:
     config_path = tmp_path / "config.yaml"
     baseline = Path("tests/dummy_config.yaml").read_text()
     config_path.write_text(baseline + "  project_creation: true\nwritable_org_ids: [1]\n")
@@ -119,9 +120,9 @@ def test_write_configuration(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) ->
     # An operator can create the organization's first project with an empty project allowlist.
     validate_startup_config(replace(settings, allowed_project_ids=frozenset()))
 
-    monkeypatch.setenv("AH_WRITABLE_ORG_IDS", "2")
-    monkeypatch.setenv("AH_ENABLE_PROJECT_CREATION", "false")
-    settings = load_config_from_path(config_path, override_from_env_vars=True)
+    overrides = {"AH_WRITABLE_ORG_IDS": "2", "AH_ENABLE_PROJECT_CREATION": "false"}
+    with patch.dict(os.environ, overrides, clear=True):
+        settings = load_config_from_path(config_path, override_from_env_vars=True)
     assert settings.writable_org_ids == {2} and not settings.project_creation_enabled
 
     args = server._build_arg_parser().parse_args(
