@@ -38,17 +38,21 @@ from audithub_sdk.api.tools_api import ToolsApi
 from audithub_sdk.api.users_api import UsersApi
 from audithub_sdk.api.versions_api import VersionsApi
 from audithub_sdk.models.custom_detector import CustomDetector
+from audithub_sdk.models.env_var import EnvVar
 from audithub_sdk.models.fuzzing_blacklist_entry import FuzzingBlacklistEntry
 from audithub_sdk.models.hint_ad_hoc import HintAdHoc
 from audithub_sdk.models.hint_from_organization_library import HintFromOrganizationLibrary
 from audithub_sdk.models.hint_from_standard_library import HintFromStandardLibrary
 from audithub_sdk.models.hint_from_version import HintFromVersion
 from audithub_sdk.models.id_and_message_response import IdAndMessageResponse
+from audithub_sdk.models.input_info import InputInfo
 from audithub_sdk.models.issue_info_base_complete import IssueInfoBaseComplete
 from audithub_sdk.models.issue_type import IssueType
 from audithub_sdk.models.issue_type_info import IssueTypeInfo
 from audithub_sdk.models.or_ca_input import OrCaInput
 from audithub_sdk.models.or_ca_parameters import OrCaParameters
+from audithub_sdk.models.project_dependency import ProjectDependency
+from audithub_sdk.models.project_info_input import ProjectInfoInput
 from audithub_sdk.models.root_model_list_union_hint_from_version_hint_from_standard_library_hint_from_organization_library_hint_ad_hoc_inner import (  # noqa: E501
     RootModelListUnionHintFromVersionHintFromStandardLibraryHintFromOrganizationLibraryHintAdHocInner as SdkOrCaHintReference,  # noqa: E501
 )
@@ -70,7 +74,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
 from audithub_mcp import config as server_config
-from audithub_mcp import paql, parse_fio_logs, vanguard
+from audithub_mcp import paql, parse_fio_logs, vanguard, versions
 from audithub_mcp.audit import log_call_error, log_call_start, log_call_success
 from audithub_mcp.models import (
     Comment,
@@ -80,10 +84,12 @@ from audithub_mcp.models import (
     DraftIssueInput,
     FindingsParseResult,
     FIOData,
+    InlineZipArchive,
     IssueDetails,
     IssueForList,
     IssueTypeReference,
     MyOrganization,
+    NonBlankText,
     OrCaAdHocHintReference,
     OrCaAdHocSpecReference,
     OrCaHintReference,
@@ -99,12 +105,17 @@ from audithub_mcp.models import (
     OrganizationLookupItem,
     PaqlValidationResult,
     Project,
+    ProjectArchiveSource,
     ProjectLookupItem,
+    ProjectPath,
+    ProjectSource,
+    SourcePath,
     Task,
     TaskArtifact,
     TaskArtifactContent,
     TaskCreation,
     TaskLogsWriteResult,
+    TempVersionId,
     Thread,
     Version,
     VersionCreation,
@@ -154,7 +165,9 @@ _VANGUARD_CUSTOM_DETECTOR_DOCS_CACHE: dict[str, str] | None = None
 
 _context: AuditHubSdkContext | None = None
 _allowed_org_ids: frozenset[int] = frozenset()
+_writable_org_ids: frozenset[int] = frozenset()
 _allowed_project_ids: frozenset[int] = frozenset()
+_project_creation_enabled = False
 _draft_issue_creation_enabled = False
 _task_runs_enabled = False
 _version_creation_enabled = False
@@ -264,6 +277,13 @@ def _set_task_runs_enabled(enabled: bool) -> None:
     _set_registered_tools_enabled(_TASK_RUN_TOOLS, enabled)
 
 
+def _set_project_creation_enabled(enabled: bool) -> None:
+    """Enable or disable the project creation tool."""
+    global _project_creation_enabled
+    _project_creation_enabled = enabled
+    _set_registered_tools_enabled(_PROJECT_CREATION_TOOLS, enabled)
+
+
 def _set_version_creation_enabled(enabled: bool) -> None:
     """Enable or disable opt-in version-creation MCP tools."""
     global _version_creation_enabled
@@ -364,6 +384,11 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--writable-org-ids",
+        metavar="IDS",
+        help="Comma-separated allowed organization IDs approved for project creation and Scout.",
+    )
+    parser.add_argument(
         "--allowed-project-ids",
         metavar="IDS",
         help=(
@@ -379,6 +404,11 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         "--enable-draft-issue-creation",
         action="store_true",
         help="Register the opt-in tool that creates draft issues only.",
+    )
+    parser.add_argument(
+        "--enable-project-creation",
+        action="store_true",
+        help="Register the tool that creates AuditHub projects.",
     )
     parser.add_argument(
         "--enable-task-runs",
@@ -533,7 +563,13 @@ def _apply_cli_args_to_config(
         ),
         context=config.context,
         allowed_org_ids=allowed_org_ids,
+        writable_org_ids=(
+            config.writable_org_ids
+            if args.writable_org_ids is None
+            else server_config._parse_id_list(args.writable_org_ids, "--writable-org-ids")
+        ),
         allowed_project_ids=allowed_project_ids,
+        project_creation_enabled=config.project_creation_enabled or args.enable_project_creation,
         task_runs_enabled=config.task_runs_enabled or args.enable_task_runs,
         version_creation_enabled=config.version_creation_enabled or args.enable_version_creation,
         edit_custom_detectors_enabled=(
@@ -601,6 +637,13 @@ def _assert_project_allowed(project_id: int) -> None:
             f"Project ID {project_id} is not in the configured allowlist. "
             "Use get_projects after finding a valid organization ID."
         )
+
+
+def _assert_org_writable(organization_id: int) -> None:
+    """Require both organization access and an explicit grant for these mutations."""
+    _assert_org_allowed(organization_id)
+    if organization_id not in _writable_org_ids:
+        raise RuntimeError(f"Write access is disabled for organization ID {organization_id}.")
 
 
 def _build_pagination_params(limit: int | None, offset: int | None) -> dict[str, int] | None:
@@ -1552,6 +1595,176 @@ async def get_project_comments(
     )
 
 
+async def create_project(
+    organization_id: _AhId,
+    name: NonBlankText,
+    src_path: Annotated[
+        ProjectPath, Field(description="Source directory relative to the project root.")
+    ] = ".",
+    input_info: Annotated[
+        ProjectSource | None,
+        Field(description="Git repository (including GitHub) or ZIP archive source."),
+    ] = None,
+    archive: Annotated[
+        NonBlankText | InlineZipArchive | None,
+        Field(
+            description="ZIP upload as a server-local file path or an object with content_base64."
+        ),
+    ] = None,
+    temp_version_id: Annotated[
+        TempVersionId | None,
+        Field(description="Reuse a source staged in this organization with matching input_info."),
+    ] = None,
+    version_name: Annotated[
+        str | None, Field(description="Initial version name. AuditHub defaults to 'initial'.")
+    ] = None,
+    commit_hash: str | None = None,
+    is_deployed: bool | None = None,
+    project_root: ProjectPath = ".",
+    env_vars: list[EnvVar] | None = None,
+    dependencies: ProjectDependency | None = None,
+    build_system: Literal["hardhat", "hardhat-ignition", "foundry"] | None = None,
+    contents: list[Literal["circom", "solidity", "picus", "llzk"]] | None = None,
+    include_path: ProjectPath | None = None,
+    specs_path: ProjectPath | None = None,
+    hints_path: ProjectPath | None = None,
+    deployment_script_path: ProjectPath | None = None,
+) -> IdAndMessageResponse:
+    """Create a configured AuditHub project with an optional initial version and return its ID."""
+
+    async def _run() -> IdAndMessageResponse:
+        if not _project_creation_enabled:
+            raise RuntimeError("AuditHub project creation is disabled.")
+        _assert_org_writable(organization_id)
+        source = input_info or ProjectArchiveSource()
+        if archive is not None and (source.url is not None or temp_version_id is not None):
+            raise RuntimeError("A ZIP upload cannot be combined with a URL or a staged version.")
+        if temp_version_id is not None and (commit_hash is not None or is_deployed is not None):
+            raise RuntimeError("Set commit_hash and is_deployed when staging the source.")
+        needs_staging = temp_version_id is None and (archive is not None or source.url is not None)
+        if (
+            temp_version_id is None
+            and not needs_staging
+            and any(value is not None for value in (version_name, commit_hash, is_deployed))
+        ):
+            raise RuntimeError("Initial version settings require a source or a staged version.")
+
+        fields = {
+            "name": name,
+            "project_root": project_root,
+            "src_path": src_path,
+            "input_info": InputInfo(actual_instance=source),
+            "env_vars": env_vars,
+            "dependencies": dependencies,
+            "build_system": build_system,
+            "contents": contents,
+            "include_path": include_path,
+            "specs_path": specs_path,
+            "hints_path": hints_path,
+            "deployment_script_path": deployment_script_path,
+        }
+        project = ProjectInfoInput.model_validate(
+            {k: v for k, v in fields.items() if v is not None}
+        )
+
+        async def _create(client: AuthenticatedApiClient) -> IdAndMessageResponse:
+            staged_id = temp_version_id
+            if needs_staging:
+                staged_id = await versions.stage_project_sources(
+                    client,
+                    organization_id=organization_id,
+                    source=source,
+                    archive=archive,
+                    version_name=version_name,
+                    commit_hash=commit_hash,
+                    is_deployed=is_deployed,
+                )
+            try:
+                created = await ProjectsApi(
+                    client
+                ).post_project_organizations_organization_id_projects_post(
+                    organization_id=organization_id,
+                    project_info_input=project,
+                    temp_version_id=staged_id,
+                    version_name=version_name,
+                )
+                return IdAndMessageResponse.model_validate(created)
+            except Exception as exc:
+                if not needs_staging:
+                    raise
+                raise RuntimeError(
+                    f"{_safe_exception_message(exc)} Sources were staged as "
+                    f"temp_version_id={staged_id}. "
+                    "Check whether the project was created before retrying with that ID."
+                ) from None
+
+        return await _with_api_client(_create)
+
+    return await _run_tool(
+        _run, tool_name="create_project", safe_args={"organization_id": organization_id}
+    )
+
+
+async def run_scout_task(
+    organization_id: _AhId,
+    project_id: _AhId,
+    version_id: _AhId,
+    budget: Annotated[
+        NonBlankText, Field(description="AuditHub budget class for this Scout review.")
+    ],
+    name: NonBlankText | None = None,
+    input_limit: Annotated[
+        list[SourcePath] | None,
+        Field(description="Source files to review, relative to the version root."),
+    ] = None,
+) -> TaskCreation:
+    """Start a Scout source review on an approved project version and return its task ID."""
+
+    async def _submit(client: AuthenticatedApiClient) -> TaskCreation:
+        # SDK 1.0.2 provides the authenticated transport but predates the Scout endpoint.
+        request = client.param_serialize(
+            method="POST",
+            resource_path=(
+                "/organizations/{organization_id}/projects/{project_id}"
+                "/versions/{version_id}/tools/agent"
+            ),
+            path_params={
+                "organization_id": organization_id,
+                "project_id": project_id,
+                "version_id": version_id,
+            },
+            header_params={"Accept": "application/json", "Content-Type": "application/json"},
+            body={
+                "budget": budget,
+                "name": name,
+                "parameters": {"input_limit": input_limit, "generate_pocs": False},
+            },
+            auth_settings=["OpenIdConnect"],
+        )
+        response = await client.call_api(*request)
+        await response.read()
+        created = client.response_deserialize(
+            response_data=response, response_types_map={"200": "TaskCreation"}
+        )
+        return TaskCreation.model_validate(created.data)
+
+    async def _run() -> TaskCreation:
+        _assert_task_runs_enabled()
+        _assert_org_writable(organization_id)
+        _assert_project_allowed(project_id)
+        return await _with_api_client(_submit)
+
+    return await _run_tool(
+        _run,
+        tool_name="run_scout_task",
+        safe_args={
+            "organization_id": organization_id,
+            "project_id": project_id,
+            "version_id": version_id,
+        },
+    )
+
+
 def _build_sdk_orca_spec(reference: OrCaSpecReference) -> SdkOrCaSpecReference:
     """Convert a local OrCa spec reference to the generated SDK union wrapper."""
     sdk_reference: _SdkOrCaSpecActual
@@ -1899,35 +2112,15 @@ async def _create_version_from_archive_with_client(
     version_input: VersionFromFileInput,
 ) -> VersionCreation:
     """Create a version by sending the .zip archive as multipart upload data."""
-    method, url, headers, body, post_params = client.param_serialize(
-        method="POST",
-        resource_path="/organizations/{organization_id}/projects/{project_id}/versions",
-        path_params={"organization_id": organization_id, "project_id": project_id},
-        query_params=None,
-        header_params={
-            "Accept": "application/json",
-            "Content-Type": "multipart/form-data",
-        },
-        body=None,
-        post_params=[
-            ("name", version_input.name),
-            *(
-                [("commit_hash", version_input.commit_hash)]
-                if version_input.commit_hash is not None
-                else []
-            ),
-            *(
-                [("is_deployed", version_input.is_deployed)]
-                if version_input.is_deployed is not None
-                else []
-            ),
-        ],
-        files={"archive": version_input.archive},
-        auth_settings=["OpenIdConnect"],
-        collection_formats={},
+    response_data = await versions.upload_version_archive(
+        client,
+        organization_id=organization_id,
+        project_id=project_id,
+        archive=version_input.archive,
+        name=version_input.name,
+        commit_hash=version_input.commit_hash,
+        is_deployed=version_input.is_deployed,
     )
-    response_data = await client.call_api(method, url, headers, body, post_params)
-    await response_data.read()
     created_version = client.response_deserialize(
         response_data=response_data,
         response_types_map={"200": "IdAndMessageResponse"},
@@ -2095,8 +2288,10 @@ _CREATE_VERSION_FROM_URL_TOOL_NAME = "create_version_from_url"
 _UPLOAD_CUSTOM_DETECTOR_TOOL_NAME = "upload_custom_detector"
 
 _DRAFT_ISSUE_CREATION_TOOLS = (RegisteredTool("create_draft_issue", create_draft_issue),)
+_PROJECT_CREATION_TOOLS = (RegisteredTool("create_project", create_project),)
 
 _TASK_RUN_TOOLS = (
+    RegisteredTool("run_scout_task", run_scout_task),
     RegisteredTool(_RUN_ORCA_TASK_TOOL_NAME, run_orca_task),
     RegisteredTool(_RUN_DEFI_VANGUARD_TASK_TOOL_NAME, run_defi_vanguard_task),
 )
@@ -2111,7 +2306,7 @@ _CUSTOM_DETECTOR_UPLOAD_TOOLS = (
 
 def main() -> None:
     """Entry point for the ``audithub-mcp`` console script."""
-    global _allowed_org_ids, _allowed_project_ids, _context
+    global _allowed_org_ids, _writable_org_ids, _allowed_project_ids, _context
 
     parser = _build_arg_parser()
     args, _ = parser.parse_known_args()
@@ -2119,6 +2314,7 @@ def main() -> None:
         parser.error("--shutdown-secret-file requires --local-http-server")
     try:
         if args.list_tools:
+            _set_project_creation_enabled(True)
             _set_draft_issue_creation_enabled(True)
             _set_task_runs_enabled(True)
             _set_version_creation_enabled(True)
@@ -2131,8 +2327,10 @@ def main() -> None:
         sys.exit(str(exc))
 
     _allowed_org_ids = settings.allowed_org_ids
+    _writable_org_ids = settings.writable_org_ids
     _allowed_project_ids = settings.allowed_project_ids
     _set_draft_issue_creation_enabled(settings.draft_issue_creation_enabled)
+    _set_project_creation_enabled(settings.project_creation_enabled)
     _set_task_runs_enabled(settings.task_runs_enabled)
     _set_version_creation_enabled(settings.version_creation_enabled)
     _set_edit_custom_detectors_enabled(settings.edit_custom_detectors_enabled)

@@ -1,10 +1,13 @@
 """SDK-backed AuditHub models and MCP-specific response types."""
 
+from pathlib import PurePosixPath
 from typing import Annotated, Literal
 
+from audithub_sdk.models.archive_input import ArchiveInput
 from audithub_sdk.models.comment import Comment
 from audithub_sdk.models.finding_reference import FindingReference
 from audithub_sdk.models.fio_data import FIOData
+from audithub_sdk.models.git_input import GitInput
 from audithub_sdk.models.issue_details import IssueDetails
 from audithub_sdk.models.issue_for_list import IssueForList
 from audithub_sdk.models.my_organization import MyOrganization
@@ -14,9 +17,62 @@ from audithub_sdk.models.task import Task
 from audithub_sdk.models.task_creation import TaskCreation
 from audithub_sdk.models.thread import Thread
 from audithub_sdk.models.version import Version
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    model_validator,
+)
 
 _PositiveId = Annotated[int, Field(strict=True, gt=0)]
+NonBlankText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+
+
+def _validate_source_path(value: str) -> str:
+    path = PurePosixPath(value)
+    if path.is_absolute() or ".." in path.parts or "\x00" in value:
+        raise ValueError("Use a relative path within the project version.")
+    return value
+
+
+ProjectPath = Annotated[str, AfterValidator(_validate_source_path)]
+SourcePath = Annotated[ProjectPath, Field(min_length=1)]
+
+
+class ProjectGitSource(GitInput):
+    """Git repository for the initial version. The revision may be a branch, tag, or commit."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    input_type: Literal["git"] = "git"
+    url: NonBlankText
+    includes_submodules: bool = False
+
+
+class ProjectArchiveSource(ArchiveInput):
+    """ZIP source. Supply a URL here or upload a ZIP using the tool's archive argument."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    input_type: Literal["archive"] = "archive"
+    url: NonBlankText | None = None
+
+
+ProjectSource = Annotated[
+    ProjectGitSource | ProjectArchiveSource, Field(discriminator="input_type")
+]
+TempVersionId = Annotated[str, Field(pattern=r"^[1-9][0-9]*$")]
+
+
+class InlineZipArchive(BaseModel):
+    """ZIP uploaded by an MCP client that does not share the server's filesystem."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    filename: NonBlankText = "sources.zip"
+    content_base64: Annotated[str, Field(min_length=1, description="Base64-encoded ZIP bytes.")]
 
 
 class OrganizationLookupItem(BaseModel):
@@ -451,6 +507,7 @@ __all__ = [
     "IssueDetails",
     "IssueForList",
     "MyOrganization",
+    "NonBlankText",
     "OrganizationLookupItem",
     "OrCaAdHocHintReference",
     "OrCaAdHocSpecReference",
@@ -468,6 +525,7 @@ __all__ = [
     "PaqlValidationResult",
     "Project",
     "ProjectLookupItem",
+    "SourcePath",
     "Task",
     "TaskArtifact",
     "TaskArtifactContent",
@@ -483,7 +541,7 @@ __all__ = [
 ]
 
 
-IssueTypeReference = int | Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+IssueTypeReference = int | NonBlankText
 
 
 class DraftIssueInput(BaseModel):

@@ -44,12 +44,15 @@ class AuditHubServerConfig:
     version_creation_enabled: bool
     edit_custom_detectors_enabled: bool
     draft_issue_creation_enabled: bool = False
+    writable_org_ids: frozenset[int] = frozenset()
+    project_creation_enabled: bool = False
 
 
 class CapabilitiesConfig(BaseModel):
     """Opt-in capability toggles loaded from file-backed or env-backed sources."""
 
     draft_issue_creation: bool = False
+    project_creation: bool = False
     task_runs: bool = False
     version_creation: bool = False
     edit_custom_detectors: bool = False
@@ -63,6 +66,7 @@ class AuditHubInputConfig(BaseModel):
     audithub_oidc_client_id: str = Field(min_length=1)
     audithub_oidc_client_secret: SecretStr
     allowed_org_ids: list[_AhId]
+    writable_org_ids: list[_AhId] = Field(default_factory=list)
     allowed_project_ids: list[_AhId]
     capabilities: CapabilitiesConfig = Field(default_factory=CapabilitiesConfig)
 
@@ -100,6 +104,14 @@ def update_input_config_from_env(config: AuditHubInputConfig) -> None:
                 os.environ["AH_ALLOWED_PROJECT_IDS"],
                 "--allowed-project-ids / AH_ALLOWED_PROJECT_IDS",
             )
+        )
+    if "AH_WRITABLE_ORG_IDS" in os.environ:
+        config.writable_org_ids = list(
+            _parse_id_list(os.environ["AH_WRITABLE_ORG_IDS"], "AH_WRITABLE_ORG_IDS")
+        )
+    if "AH_ENABLE_PROJECT_CREATION" in os.environ:
+        config.capabilities.project_creation = _parse_bool_flag(
+            os.environ["AH_ENABLE_PROJECT_CREATION"], "AH_ENABLE_PROJECT_CREATION"
         )
     if "AH_ENABLE_DRAFT_ISSUE_CREATION" in os.environ:
         config.capabilities.draft_issue_creation = _parse_bool_flag(
@@ -202,6 +214,8 @@ def load_config_from_path(
         raise StartupConfigError(f"Invalid config file {path}: {exc}") from exc
     return AuditHubServerConfig(
         draft_issue_creation_enabled=input_config.capabilities.draft_issue_creation,
+        project_creation_enabled=input_config.capabilities.project_creation,
+        writable_org_ids=frozenset(input_config.writable_org_ids),
         context=_build_context(input_config),
         allowed_org_ids=frozenset(input_config.allowed_org_ids),
         allowed_project_ids=frozenset(input_config.allowed_project_ids),
@@ -226,6 +240,8 @@ def load_config_from_env() -> AuditHubServerConfig:
     input_config = AuditHubInputConfig.model_validate(input_config.model_dump())
     return AuditHubServerConfig(
         draft_issue_creation_enabled=input_config.capabilities.draft_issue_creation,
+        project_creation_enabled=input_config.capabilities.project_creation,
+        writable_org_ids=frozenset(input_config.writable_org_ids),
         context=_build_context(input_config),
         allowed_org_ids=frozenset(input_config.allowed_org_ids),
         allowed_project_ids=frozenset(input_config.allowed_project_ids),
@@ -242,7 +258,13 @@ def validate_startup_config(config: AuditHubServerConfig) -> None:
             "Error: allowed organization IDs are required. "
             "Set --allowed-org-ids or AH_ALLOWED_ORG_IDS."
         )
-    if not config.allowed_project_ids:
+    if not config.writable_org_ids <= config.allowed_org_ids:
+        raise StartupConfigError(
+            "Writable organization IDs must be a subset of allowed organization IDs."
+        )
+    if not config.allowed_project_ids and not (
+        config.project_creation_enabled and config.writable_org_ids
+    ):
         raise StartupConfigError(
             "Error: allowed project IDs are required. "
             "Set --allowed-project-ids or AH_ALLOWED_PROJECT_IDS."

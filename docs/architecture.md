@@ -42,6 +42,21 @@ Every server must satisfy four requirements:
    Reject disallowed IDs on the client side before making any network request.
    Error messages must not enumerate the full allowlist.
 
+## Project creation and Scout
+
+The MCP checks an explicit organization write allowlist and the corresponding
+capability before opening an authenticated client or reading a ZIP. For an initial
+version, the server stages a Git or ZIP URL at the organization's `temp-versions-url`
+endpoint or uploads ZIP bytes to `temp-versions`. It posts the resulting temporary
+ID, matching source description, and project settings to the organization's
+`projects` endpoint and returns the new project ID. Callers with an existing staged
+version can supply its ID directly. The operator
+controls subsequent access through the startup project allowlist. Scout also
+checks the project allowlist before submitting a review against an existing
+version. It uses the pinned SDK's authenticated client for the version-scoped
+`/tools/agent` POST endpoint. AuditHub enforces the account's permissions and
+validates the organization, project, and version relationship.
+
 ## Draft-only issues
 
 The opt-in `create_draft_issue` tool creates internal issues through the SDK issue
