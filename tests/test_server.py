@@ -56,6 +56,9 @@ _ORG_DICT = {
     "id": 1,
     "name": "Acme",
     "gh_connected": True,
+    "plan_seats": 5,
+    "extra_seats": 0,
+    "manual_user_limit": 5,
     "created_at": _TIMESTAMP,
 }
 _PROJECT_DICT = {
@@ -117,6 +120,7 @@ _CUSTOM_DETECTORS_LIBRARY_DICT = {
 }
 _TASK_DICT = {
     "id": 99,
+    "created_by": "auditor",
     "tool_name": "analysis",
     "tool_version": "1.0.0",
     "version_id": 42,

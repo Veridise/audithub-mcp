@@ -73,8 +73,8 @@ async def test_creation_calls_only_creation_endpoint(
     endpoint = AsyncMock(return_value={"id": 123, "message": "Created"})
     setattr(api, ENDPOINT, endpoint)
     monkeypatch.setattr(server, "IssuesApi", lambda client: api)
-    organization_api = MagicMock()
-    monkeypatch.setattr(server, "OrganizationsApi", organization_api)
+    issue_types_api = MagicMock()
+    monkeypatch.setattr(server, "IssueTypesApi", issue_types_api)
 
     async def with_client(
         fn: Callable[[object], Awaitable[IdAndMessageResponse]],
@@ -90,7 +90,7 @@ async def test_creation_calls_only_creation_endpoint(
     assert args["organization_id"] == 1
     assert args["project_id"] == 10
     assert args["issue_info_base_complete"].to_dict() == issue.model_dump()
-    organization_api.assert_not_called()
+    issue_types_api.assert_not_called()
 
 
 @pytest.fixture
@@ -111,7 +111,7 @@ def issue_api(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
         AsyncMock(side_effect=[{"id": 8, "message": "Created"}, {"id": 9, "message": "Created"}]),
     )
     monkeypatch.setattr(server, "IssuesApi", lambda client: api)
-    monkeypatch.setattr(server, "OrganizationsApi", lambda client: api)
+    monkeypatch.setattr(server, "IssueTypesApi", lambda client: api)
 
     async def with_client(
         fn: Callable[[object], Awaitable[IdAndMessageResponse]],

@@ -41,8 +41,8 @@ resolution-markers = [
     "python_full_version < '3.14' and sys_platform != 'win32'",
 ]
 dependencies = [
-    { name = "idna", marker = "python_full_version < '3.15'" },
-    { name = "typing-extensions", marker = "python_full_version < '3.13'" },
+    { name = "idna" },
+    { name = "typing-extensions", marker = "python_full_version < '3.13' or python_full_version >= '3.15'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/61/cc/a381afa6efea9f496eff839d4a6a1aed3bfafc7b3ab4b0d1b243a12573dd/anyio-4.14.2.tar.gz", hash = "sha256:cfa139f3ed1a23ee8f88a145ddb5ac7605b8bbfd8592baacd7ce3d8bb4313c7f", size = 260176, upload-time = "2026-07-12T20:29:07.082Z" }
 wheels = [
@@ -57,7 +57,7 @@ resolution-markers = [
     "python_full_version >= '3.15'",
 ]
 dependencies = [
-    { name = "idna", marker = "python_full_version >= '3.15'" },
+    { name = "idna" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/a9/d2/f4d173e22df740bc37b1db102b386ba719b66e95b0f0d751f556b387e6d2/anyio-4.15.1.tar.gz", hash = "sha256:9f28306018cbd6d329e64a36d58256edff76dd996fe423bc957326e578b82a94", size = 276966, upload-time = "2026-09-05T10:42:39.44Z" }
 wheels = [
@@ -98,7 +98,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "audithub-sdk", specifier = "==1.0.2" },
+    { name = "audithub-sdk", specifier = "==1.1.0" },
     { name = "fastmcp", specifier = ">=3.4.5" },
     { name = "mcp", specifier = ">=2.3.0,<3" },
     { name = "nodejs-wheel", specifier = ">=24.16.0" },
@@ -118,7 +118,7 @@ dev = [
 
 [[package]]
 name = "audithub-sdk"
-version = "1.0.2"
+version = "1.1.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "httpx" },
@@ -126,9 +126,9 @@ dependencies = [
     { name = "python-dateutil" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/52/82/17918202c9875ae77334c5ecc9b50b5b0715e363b47fa7627351e80ad725/audithub_sdk-1.0.2.tar.gz", hash = "sha256:6f329e491418b091031b5c9b4413d7210ae1fdac47ae3637b3684267639411de", size = 169140, upload-time = "2026-04-27T16:46:47.787Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/5a/2e/02aac63e180c0645d59e821924ba17d5a24fb8f2e01847a96336d5380e55/audithub_sdk-1.1.0.tar.gz", hash = "sha256:a9fe50f9d174ecf5c058e745863d49d56cd3fc575cdad0fedd1e153c064c7941", size = 194811, upload-time = "2026-11-25T19:29:41.497Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/16/c0/a6572ab78bdcc515ee2b3f64fcfc1054c2893b263303be62859cad07f46c/audithub_sdk-1.0.2-py3-none-any.whl", hash = "sha256:ea3f04045b7d49c9746d5fca345409c9a1871a405d8d31405d0e2ded8ff8be23", size = 368464, upload-time = "2026-04-27T16:46:46.29Z" },
+    { url = "https://files.pythonhosted.org/packages/83/7a/05efaa3f228e919e23f8667ffbd26405f9603567b4c7d8ab8e2d3ddd6ea5/audithub_sdk-1.1.0-py3-none-any.whl", hash = "sha256:64bae95505b090c0765c6866c95b21160c0a3e2590eb0322b0a8cf0c32f81ee2", size = 426759, upload-time = "2026-11-25T19:29:40.274Z" },
 ]
 
 [[package]]
