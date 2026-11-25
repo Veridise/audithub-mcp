@@ -5,7 +5,7 @@ description = "MCP server for AuditHub"
 requires-python = ">=3.12"
 dependencies = [
     "mcp>=2.3.0,<3",
-    "audithub-sdk==1.0.2",
+    "audithub-sdk==1.1.0",
     "pyyaml>=6.0.3",
     "nodejs-wheel>=24.16.0",
     "fastmcp>=3.4.5",

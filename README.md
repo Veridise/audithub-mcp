@@ -122,6 +122,9 @@ configuration file.
 | `get_organizations` | List allowlisted organizations; pass `details=true` for full organization records and `filter_id` to narrow results |
 | `get_defi_vanguard_detectors` | List all DeFi Vanguard detectors for an organization using the Vanguard listing block format |
 | `get_projects` | List allowlisted projects in an organization; pass `details=true` for full project records and `filter_id` to narrow results |
+| `get_all_project_documents` | Retrieve every active document with its full text using only `organization_id` and `project_id` |
+| `get_project_documents` | List all active documents for an organization and project, including IDs, names, and document text |
+| `get_project_document` | Fetch document texts in request order using `organization_id`, `project_id`, and a nonempty `document_ids` list |
 | `get_versions` | List versions for a project; pass `details=true` for full version records, `filter_id` to narrow results, and `latest_only=true` for the latest version only |
 | `get_task_info` | Get status and details for an AuditHub task |
 | `get_task_artifacts` | List sanitized artifact metadata for an AuditHub task |

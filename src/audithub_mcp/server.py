@@ -30,8 +30,9 @@ import audithub_sdk
 from audithub_sdk.api.configuration_api import ConfigurationApi
 from audithub_sdk.api.custom_detectors_org_lib_api import CustomDetectorsOrgLibApi
 from audithub_sdk.api.custom_detectors_std_lib_api import CustomDetectorsStdLibApi
+from audithub_sdk.api.issue_types_api import IssueTypesApi
 from audithub_sdk.api.issues_api import IssuesApi
-from audithub_sdk.api.organizations_api import OrganizationsApi
+from audithub_sdk.api.project_documents_api import ProjectDocumentsApi
 from audithub_sdk.api.projects_api import ProjectsApi
 from audithub_sdk.api.tasks_api import TasksApi
 from audithub_sdk.api.tools_api import ToolsApi
@@ -49,6 +50,7 @@ from audithub_sdk.models.issue_type import IssueType
 from audithub_sdk.models.issue_type_info import IssueTypeInfo
 from audithub_sdk.models.or_ca_input import OrCaInput
 from audithub_sdk.models.or_ca_parameters import OrCaParameters
+from audithub_sdk.models.project_document import ProjectDocument
 from audithub_sdk.models.root_model_list_union_hint_from_version_hint_from_standard_library_hint_from_organization_library_hint_ad_hoc_inner import (  # noqa: E501
     RootModelListUnionHintFromVersionHintFromStandardLibraryHintFromOrganizationLibraryHintAdHocInner as SdkOrCaHintReference,  # noqa: E501
 )
@@ -921,6 +923,80 @@ async def get_projects(
     )
 
 
+async def _read_project_documents(
+    organization_id: _AhId, project_id: _AhId, *, tool_name: str
+) -> list[ProjectDocument]:
+    async def _run() -> list[ProjectDocument]:
+        _assert_org_allowed(organization_id)
+        _assert_project_allowed(project_id)
+        return await _with_api_client(
+            lambda client: ProjectDocumentsApi(
+                client
+            ).get_documents_organizations_organization_id_projects_project_id_documents_get(
+                organization_id=organization_id, project_id=project_id
+            )
+        )
+
+    return await _run_tool(
+        _run,
+        tool_name=tool_name,
+        safe_args={"organization_id": organization_id, "project_id": project_id},
+    )
+
+
+@mcp.tool()
+async def get_project_documents(organization_id: _AhId, project_id: _AhId) -> list[ProjectDocument]:
+    """List all active AuditHub project documents, including their IDs, names, and text."""
+
+    return await _read_project_documents(
+        organization_id, project_id, tool_name="get_project_documents"
+    )
+
+
+@mcp.tool()
+async def get_all_project_documents(
+    organization_id: _AhId, project_id: _AhId
+) -> list[ProjectDocument]:
+    """Retrieve all active project documents with their names, IDs, and full text in one call."""
+    return await _read_project_documents(
+        organization_id, project_id, tool_name="get_all_project_documents"
+    )
+
+
+@mcp.tool()
+async def get_project_document(
+    organization_id: _AhId,
+    project_id: _AhId,
+    document_ids: Annotated[list[_AhId], Field(min_length=1)],
+) -> list[str]:
+    """Return the text of each requested project document in the order of document_ids."""
+
+    async def fetch_documents(client: AuthenticatedApiClient) -> list[str]:
+        api = ProjectDocumentsApi(client)
+        texts = []
+        for document_id in document_ids:
+            document = await api.get_document_organizations_organization_id_projects_project_id_documents_document_id_get(  # noqa: E501
+                organization_id=organization_id, project_id=project_id, document_id=document_id
+            )
+            texts.append(document.data)
+        return texts
+
+    async def _run() -> list[str]:
+        _assert_org_allowed(organization_id)
+        _assert_project_allowed(project_id)
+        return await _with_api_client(fetch_documents)
+
+    return await _run_tool(
+        _run,
+        tool_name="get_project_document",
+        safe_args={
+            "organization_id": organization_id,
+            "project_id": project_id,
+            "document_count": len(document_ids),
+        },
+    )
+
+
 @mcp.tool()
 async def get_versions(
     organization_id: _AhId,
@@ -1754,7 +1830,7 @@ async def _resolve_draft_issue_types(
     """Resolve names to organization type IDs, creating missing types once per call."""
     types_by_name: dict[str, int] = {}
     if any(isinstance(reference, str) for reference in references):
-        existing_types = await OrganizationsApi(
+        existing_types = await IssueTypesApi(
             client
         ).get_organization_issue_types_organizations_organization_id_issue_types_get(
             organization_id=organization_id
@@ -1770,7 +1846,7 @@ async def _resolve_draft_issue_types(
             resolved.append(reference)
             continue
         if reference not in types_by_name:
-            result = await OrganizationsApi(
+            result = await IssueTypesApi(
                 client
             ).post_issue_type_organizations_organization_id_issue_types_post(
                 organization_id=organization_id,
